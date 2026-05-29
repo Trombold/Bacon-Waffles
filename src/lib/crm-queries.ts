@@ -1,0 +1,244 @@
+import { createClient } from '@/lib/supabase/server';
+import type { Product, Customer, Order } from '@/lib/types';
+import type { OrderStatus } from '@/lib/theme';
+
+function hora(iso: string): string {
+  return new Date(iso).toLocaleTimeString('es-EC', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+export async function getProducts(): Promise<Product[]> {
+  const supabase = await createClient();
+  const { data } = await supabase.from('products').select('*').order('sku');
+  return (data || []) as Product[];
+}
+
+export async function getCustomers(): Promise<Customer[]> {
+  const supabase = await createClient();
+  const { data: customers } = await supabase
+    .from('customers')
+    .select('*')
+    .order('created_at', { ascending: false });
+  const { data: orders } = await supabase.from('orders').select('cliente, total, created_at');
+
+  const agg = new Map<string, { orders: number; total: number; last: string | null }>();
+  (orders || []).forEach((o) => {
+    const cur = agg.get(o.cliente) || { orders: 0, total: 0, last: null };
+    cur.orders += 1;
+    cur.total += Number(o.total);
+    if (!cur.last || o.created_at > cur.last) cur.last = o.created_at;
+    agg.set(o.cliente, cur);
+  });
+
+  return (customers || []).map((c) => {
+    const a = agg.get(c.name) || { orders: 0, total: 0, last: null };
+    return {
+      id: c.id,
+      name: c.name,
+      phone: c.phone,
+      zone: c.zone || '—',
+      orders: a.orders,
+      total: a.total,
+      last: a.last ? new Date(a.last).toLocaleDateString('es-EC') : '—',
+    } as Customer;
+  });
+}
+
+export async function getOrders(): Promise<Order[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('orders')
+    .select('*')
+    .order('created_at', { ascending: false });
+  return (data || []).map((o) => ({
+    id: o.id,
+    code: o.code,
+    cliente: o.cliente,
+    items: o.items,
+    total: Number(o.total),
+    estado: o.estado as OrderStatus,
+    archived: Boolean(o.archived),
+    hora: hora(o.created_at),
+    created_at: o.created_at,
+  }));
+}
+
+// Nombres de clientes para autocompletar al crear un pedido manual.
+export async function getCustomerNames(): Promise<string[]> {
+  const supabase = await createClient();
+  const { data } = await supabase.from('customers').select('name').order('name');
+  return (data || []).map((c) => c.name);
+}
+
+export type DashboardStats = {
+  pedidosHoy: number;
+  ventasHoy: number;
+  pedidosSemana: number;
+  ventasSemana: number;
+  ticketPromedio: number;
+  topProducts: { n: string; q: number; p: number }[];
+  salesByDay: { label: string; value: number }[];
+};
+
+function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  const supabase = await createClient();
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data: orders } = await supabase
+    .from('orders')
+    .select('items, total, created_at')
+    .gte('created_at', weekAgo);
+
+  const today = startOfToday().getTime();
+  let pedidosHoy = 0,
+    ventasHoy = 0,
+    pedidosSemana = 0,
+    ventasSemana = 0;
+
+  const byDay = new Map<string, number>();
+  (orders || []).forEach((o) => {
+    const t = new Date(o.created_at).getTime();
+    const tot = Number(o.total);
+    pedidosSemana += 1;
+    ventasSemana += tot;
+    if (t >= today) {
+      pedidosHoy += 1;
+      ventasHoy += tot;
+    }
+    const key = new Date(o.created_at).toLocaleDateString('es-EC', { weekday: 'short' });
+    byDay.set(key, (byDay.get(key) || 0) + tot);
+  });
+
+  // Top productos: parsea el texto de items de los pedidos de la semana
+  // (formato "2× King Kong, 1× Mocca") y suma cantidades por producto del catálogo.
+  const { data: products } = await supabase.from('products').select('name');
+  const names = (products || []).map((p) => String(p.name));
+  const prodAgg = new Map<string, number>();
+  (orders || []).forEach((o) => {
+    const text = String(o.items || '').toLowerCase();
+    for (const name of names) {
+      const ln = name.toLowerCase();
+      if (!ln || !text.includes(ln)) continue;
+      // cantidad: número que precede al nombre (ej. "2× king kong"), por defecto 1
+      const re = new RegExp('(\\d+)\\s*[x×]?\\s*' + ln.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const m = text.match(re);
+      const qty = m ? parseInt(m[1], 10) : 1;
+      prodAgg.set(name, (prodAgg.get(name) || 0) + qty);
+    }
+  });
+  const sorted = [...prodAgg.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const maxQ = sorted[0]?.[1] || 1;
+  const topProducts = sorted.map(([n, q]) => ({ n, q, p: Math.round((q / maxQ) * 100) }));
+
+  const salesByDay = [...byDay.entries()].map(([label, value]) => ({ label, value }));
+
+  return {
+    pedidosHoy,
+    ventasHoy,
+    pedidosSemana,
+    ventasSemana,
+    ticketPromedio: pedidosSemana ? ventasSemana / pedidosSemana : 0,
+    topProducts,
+    salesByDay,
+  };
+}
+
+export type ReportStats = {
+  ventasMes: number;
+  pedidosMes: number;
+  ticketMes: number;
+  mejorDia: string;
+  horaPico: string;
+  weekday: { d: string; v: number }[];
+  categoryMix: { n: string; v: number; p: number }[];
+};
+
+export async function getReports(): Promise<ReportStats> {
+  const supabase = await createClient();
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+
+  const { data: orders } = await supabase
+    .from('orders')
+    .select('items, total, created_at')
+    .gte('created_at', monthStart.toISOString());
+
+  let ventasMes = 0;
+  const pedidosMes = (orders || []).length;
+  const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  const wd = new Map<string, number>();
+  const hourCount = new Map<number, number>();
+
+  (orders || []).forEach((o) => {
+    const tot = Number(o.total);
+    ventasMes += tot;
+    const dt = new Date(o.created_at);
+    const dname = DIAS[dt.getDay()];
+    wd.set(dname, (wd.get(dname) || 0) + tot);
+    const h = dt.getHours();
+    hourCount.set(h, (hourCount.get(h) || 0) + 1);
+  });
+
+  const weekdayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie'];
+  const weekday = weekdayOrder.map((d) => ({ d, v: Math.round(wd.get(d) || 0) }));
+  const mejorDia = weekday.length
+    ? weekday.reduce((a, b) => (b.v > a.v ? b : a), weekday[0]).d
+    : 'Viernes';
+  const horaPico = hourCount.size
+    ? `${[...hourCount.entries()].sort((a, b) => b[1] - a[1])[0][0]}:00`
+    : '20:00';
+
+  // Mix de categorías REAL: atribuye el total de cada pedido a la(s) categoría(s)
+  // de los productos detectados en su texto de items (los pedidos manuales no
+  // tienen order_items estructurados). Si un pedido toca varias categorías, el
+  // total se reparte equitativamente entre ellas.
+  const { data: products } = await supabase.from('products').select('name, cat');
+  const nameCat: { name: string; cat: string }[] = (products || []).map((p) => ({
+    name: String(p.name).toLowerCase(),
+    cat: p.cat,
+  }));
+
+  const cats = ['Dulces', 'Salados', 'Bebidas'] as const;
+  const catAgg = new Map<string, number>(cats.map((c) => [c, 0]));
+  (orders || []).forEach((o) => {
+    const text = String(o.items || '').toLowerCase();
+    const matched = new Set<string>();
+    for (const { name, cat } of nameCat) {
+      if (name && text.includes(name)) matched.add(cat);
+    }
+    if (matched.size === 0) return; // sin coincidencia → no se atribuye
+    const share = Number(o.total) / matched.size;
+    matched.forEach((cat) => catAgg.set(cat, (catAgg.get(cat) || 0) + share));
+  });
+
+  const totalMix = [...catAgg.values()].reduce((a, b) => a + b, 0);
+  const categoryMix: ReportStats['categoryMix'] = cats.map((n) => {
+    const v = Math.round((catAgg.get(n) || 0) * 100) / 100;
+    return { n, v, p: totalMix > 0 ? Math.round((v / totalMix) * 100) : 0 };
+  });
+  // Normaliza el redondeo para que los porcentajes sumen exactamente 100.
+  if (totalMix > 0) {
+    const sumP = categoryMix.reduce((s, m) => s + m.p, 0);
+    const top = categoryMix.reduce((a, b) => (b.v > a.v ? b : a), categoryMix[0]);
+    top.p += 100 - sumP;
+  }
+
+  return {
+    ventasMes,
+    pedidosMes,
+    ticketMes: pedidosMes ? ventasMes / pedidosMes : 0,
+    mejorDia,
+    horaPico,
+    weekday,
+    categoryMix,
+  };
+}

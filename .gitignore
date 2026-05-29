@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+.env
+.env.local
+.DS_Store
+*.log
+next-env.d.ts
+
+# artefactos de prueba (screenshots Playwright en la raíz)
+/*.png
+.playwright-mcp/

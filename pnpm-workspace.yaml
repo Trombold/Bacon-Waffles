@@ -1,0 +1,9 @@
+# pnpm bloquea scripts de build de dependencias por defecto (seguridad supply-chain).
+# Solo los paquetes en true pueden ejecutar su script de build.
+allowBuilds:
+  sharp: true
+
+# Forzar postcss parcheado (>=8.5.10) sobre la versión transitiva de Next.
+# Corrige GHSA-qx2v-qp2m-jg93 (XSS en stringify). Bump menor, API-compatible.
+overrides:
+  postcss: '>=8.5.10'
