@@ -1,6 +1,7 @@
 import Link from 'next/link';
-import { BRAND, STEPS, REVIEWS, HERO_IMG, waLink, type MenuItem } from '@/lib/data';
+import { BRAND, STEPS, HERO_IMG, waLink, type MenuItem } from '@/lib/data';
 import { getMenu } from '@/lib/menu';
+import { getPublicReviews } from '@/lib/reviews';
 import { PALETTE_D as P } from '@/lib/theme';
 
 // Revalida el menú público cada 60s (editable desde el CRM).
@@ -71,6 +72,7 @@ function MenuCategory({
 
 export default async function Landing() {
   const menu = await getMenu();
+  const reviews = await getPublicReviews();
   const css = `
     .v1d { background: ${P.bg}; color: ${P.ink}; font-family: 'Manrope', system-ui, sans-serif; max-width: 1440px; margin: 0 auto; }
     .v1d .display { font-family: 'Cormorant Garamond', 'Times New Roman', serif; font-weight: 500; letter-spacing: -0.02em; }
@@ -319,7 +321,7 @@ export default async function Landing() {
         <div className="mono brand eyebrow">— Comentarios</div>
         <h2 className="display" style={{ fontSize: 56, lineHeight: 1, margin: '0 0 48px' }}>Lo que dicen.</h2>
         <div className="reviews">
-          {REVIEWS.map((r, i) => (
+          {reviews.map((r, i) => (
             <div key={i} className="review">
               <div className="star" style={{ fontSize: 14, letterSpacing: 3, marginBottom: 16 }}>{'★'.repeat(r.s)}</div>
               <p className="display">“{r.t}”</p>

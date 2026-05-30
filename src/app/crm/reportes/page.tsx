@@ -26,7 +26,17 @@ export default async function Reportes() {
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
         <StatCard label="Ventas mes" value={money(r.ventasMes)} sub="mes en curso" />
+        <StatCard label="Gasto mes" value={money(r.gastoMes)} sub="compras de inventario" accent={C.red} />
+        <StatCard
+          label="Margen mes"
+          value={money(r.margenMes)}
+          sub="ventas − gasto"
+          accent={r.margenMes >= 0 ? C.green : C.red}
+        />
         <StatCard label="Pedidos mes" value={String(r.pedidosMes)} sub={`ticket prom. ${money(r.ticketMes)}`} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16, marginBottom: 16 }}>
         <StatCard label="Mejor día" value={r.mejorDia} sub="por ventas acumuladas" accent={C.amber} />
         <StatCard label="Hora pico" value={r.horaPico} sub="mayor volumen de pedidos" />
       </div>

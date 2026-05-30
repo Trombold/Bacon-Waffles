@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import type { Product, Customer, Order } from '@/lib/types';
+import type { Product, Customer, Order, Review, Ingredient, Purchase, RecipeLine } from '@/lib/types';
 import type { OrderStatus } from '@/lib/theme';
 
 function hora(iso: string): string {
@@ -47,6 +47,17 @@ export async function getCustomers(): Promise<Customer[]> {
   });
 }
 
+// Todas las reseñas (activas e inactivas) para el panel del CRM.
+export async function getReviews(): Promise<Review[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('reviews')
+    .select('*')
+    .order('sort')
+    .order('created_at');
+  return (data || []) as Review[];
+}
+
 export async function getOrders(): Promise<Order[]> {
   const supabase = await createClient();
   const { data } = await supabase
@@ -71,6 +82,91 @@ export async function getCustomerNames(): Promise<string[]> {
   const supabase = await createClient();
   const { data } = await supabase.from('customers').select('name').order('name');
   return (data || []).map((c) => c.name);
+}
+
+// Productos activos (nombre + precio) para construir un pedido con total automático.
+export async function getActiveProducts(): Promise<{ name: string; price: number }[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('products')
+    .select('name, price, cat')
+    .eq('active', true)
+    .order('cat')
+    .order('name');
+  return (data || []).map((p) => ({ name: p.name, price: Number(p.price) }));
+}
+
+// ───────── Inventario ─────────
+
+export async function getIngredients(): Promise<Ingredient[]> {
+  const supabase = await createClient();
+  const { data } = await supabase.from('ingredients').select('*').order('name');
+  return (data || []).map((i) => ({
+    id: i.id,
+    name: i.name,
+    unit: i.unit,
+    stock: Number(i.stock),
+    threshold: Number(i.threshold),
+    avg_cost: Number(i.avg_cost),
+    active: Boolean(i.active),
+  })) as Ingredient[];
+}
+
+// Ingredientes activos cuyo stock cayó al umbral o por debajo (umbral > 0).
+export async function getLowStock(): Promise<Ingredient[]> {
+  const all = await getIngredients();
+  return all.filter((i) => i.active && i.threshold > 0 && i.stock <= i.threshold);
+}
+
+export async function getPurchases(limit = 100): Promise<Purchase[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('purchases')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  return (data || []).map((p) => ({
+    id: p.id,
+    ingredient_id: p.ingredient_id,
+    ingredient_name: p.ingredient_name,
+    qty_display: Number(p.qty_display),
+    unit: p.unit,
+    qty_canon: Number(p.qty_canon),
+    total_cost: Number(p.total_cost),
+    created_at: p.created_at,
+  })) as Purchase[];
+}
+
+// Todas las líneas de receta (join con ingredientes) para el editor de recetas.
+export async function getRecipeLines(): Promise<RecipeLine[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('recipes')
+    .select('id, product_id, ingredient_id, qty, ingredients(name, unit)');
+  return (data || []).map((r) => {
+    const ing = r.ingredients as unknown as { name: string; unit: 'g' | 'ml' | 'unidad' } | null;
+    return {
+      id: r.id,
+      product_id: r.product_id,
+      ingredient_id: r.ingredient_id,
+      ingredient_name: ing?.name || '—',
+      unit: ing?.unit || 'g',
+      qty: Number(r.qty),
+    };
+  }) as RecipeLine[];
+}
+
+// Gasto en compras del mes en curso (para Reportes / margen).
+export async function getMonthlyExpense(): Promise<number> {
+  const supabase = await createClient();
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const { data } = await supabase
+    .from('purchases')
+    .select('total_cost')
+    .gte('created_at', monthStart.toISOString());
+  return (data || []).reduce((s, p) => s + Number(p.total_cost), 0);
 }
 
 export type DashboardStats = {
@@ -155,6 +251,8 @@ export type ReportStats = {
   ventasMes: number;
   pedidosMes: number;
   ticketMes: number;
+  gastoMes: number;
+  margenMes: number;
   mejorDia: string;
   horaPico: string;
   weekday: { d: string; v: number }[];
@@ -171,6 +269,13 @@ export async function getReports(): Promise<ReportStats> {
     .from('orders')
     .select('items, total, created_at')
     .gte('created_at', monthStart.toISOString());
+
+  // Gasto del mes = compras de inventario registradas este mes.
+  const { data: monthPurchases } = await supabase
+    .from('purchases')
+    .select('total_cost')
+    .gte('created_at', monthStart.toISOString());
+  const gastoMes = (monthPurchases || []).reduce((s, p) => s + Number(p.total_cost), 0);
 
   let ventasMes = 0;
   const pedidosMes = (orders || []).length;
@@ -236,6 +341,8 @@ export async function getReports(): Promise<ReportStats> {
     ventasMes,
     pedidosMes,
     ticketMes: pedidosMes ? ventasMes / pedidosMes : 0,
+    gastoMes,
+    margenMes: ventasMes - gastoMes,
     mejorDia,
     horaPico,
     weekday,

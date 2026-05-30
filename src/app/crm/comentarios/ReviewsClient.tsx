@@ -2,29 +2,29 @@
 
 import { useState, useTransition } from 'react';
 import { CRM_THEME, CRM_THEME as C } from '@/lib/theme';
-import type { Product } from '@/lib/types';
-import { saveProduct, deleteProduct, toggleProduct } from '@/app/crm/actions';
+import type { Review } from '@/lib/types';
+import { saveReview, deleteReview, toggleReview } from '@/app/crm/actions';
 
-const CATS = ['Todos', 'Dulces', 'Salados', 'Bebidas', 'Inactivos'] as const;
+const FILTERS = ['Todos', 'Activos', 'Inactivos'] as const;
 
-export default function ProductsClient({ products }: { products: Product[] }) {
-  const [filter, setFilter] = useState<(typeof CATS)[number]>('Todos');
-  const [editing, setEditing] = useState<Product | null>(null);
+export default function ReviewsClient({ reviews }: { reviews: Review[] }) {
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]>('Todos');
+  const [editing, setEditing] = useState<Review | null>(null);
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  const shown = products.filter((p) => {
-    if (filter === 'Todos') return true;
-    if (filter === 'Inactivos') return !p.active;
-    return p.cat === filter;
+  const shown = reviews.filter((r) => {
+    if (filter === 'Activos') return r.active;
+    if (filter === 'Inactivos') return !r.active;
+    return true;
   });
 
   function openNew() {
     setEditing(null);
     setOpen(true);
   }
-  function openEdit(p: Product) {
-    setEditing(p);
+  function openEdit(r: Review) {
+    setEditing(r);
     setOpen(true);
   }
 
@@ -32,20 +32,20 @@ export default function ProductsClient({ products }: { products: Product[] }) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
     startTransition(async () => {
-      await saveProduct(fd);
+      await saveReview(fd);
       setOpen(false);
     });
   }
   function remove(id: string) {
     const fd = new FormData();
     fd.set('id', id);
-    startTransition(() => deleteProduct(fd));
+    startTransition(() => deleteReview(fd));
   }
-  function toggle(p: Product) {
+  function toggle(r: Review) {
     const fd = new FormData();
-    fd.set('id', p.id);
-    fd.set('active', String(p.active));
-    startTransition(() => toggleProduct(fd));
+    fd.set('id', r.id);
+    fd.set('active', String(r.active));
+    startTransition(() => toggleReview(fd));
   }
 
   return (
@@ -60,35 +60,35 @@ export default function ProductsClient({ products }: { products: Product[] }) {
         }}
       >
         <div style={{ display: 'flex', gap: 8 }}>
-          {CATS.map((cn) => (
+          {FILTERS.map((fn) => (
             <button
-              key={cn}
-              onClick={() => setFilter(cn)}
+              key={fn}
+              onClick={() => setFilter(fn)}
               style={{
                 padding: '6px 12px',
                 borderRadius: 6,
                 border: 0,
-                background: filter === cn ? C.ink : 'transparent',
-                color: filter === cn ? C.bg : C.muted,
+                background: filter === fn ? C.ink : 'transparent',
+                color: filter === fn ? C.bg : C.muted,
                 fontSize: 12,
                 cursor: 'pointer',
                 fontWeight: 600,
                 fontFamily: 'inherit',
               }}
             >
-              {cn}
+              {fn}
             </button>
           ))}
         </div>
         <button onClick={openNew} style={btn(C)}>
-          + Nuevo producto
+          + Nuevo comentario
         </button>
       </div>
 
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ color: C.muted, textAlign: 'left', background: C.bg }}>
-            {['SKU', 'Producto', 'Categoría', 'Precio', 'Estado', ''].map((h) => (
+            {['Orden', 'Autor', 'Comentario', 'Estrellas', 'Estado', ''].map((h) => (
               <th key={h} style={th}>
                 {h}
               </th>
@@ -96,27 +96,25 @@ export default function ProductsClient({ products }: { products: Product[] }) {
           </tr>
         </thead>
         <tbody>
-          {shown.map((p) => (
-            <tr key={p.id} style={{ borderTop: `1px solid ${C.line}` }}>
-              <td style={{ ...td, fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: C.muted }}>{p.sku}</td>
-              <td style={{ ...td, fontWeight: 600 }}>{p.name}</td>
+          {shown.map((r) => (
+            <tr key={r.id} style={{ borderTop: `1px solid ${C.line}` }}>
+              <td style={{ ...td, fontFamily: 'JetBrains Mono, monospace', fontSize: 12, color: C.muted }}>{r.sort}</td>
+              <td style={{ ...td, fontWeight: 600, whiteSpace: 'nowrap' }}>{r.name}</td>
+              <td style={{ ...td, color: C.muted, maxWidth: 420 }}>{r.text}</td>
+              <td style={{ ...td, color: C.amber, whiteSpace: 'nowrap' }}>{'★'.repeat(r.stars)}</td>
               <td style={td}>
-                <span style={{ padding: '2px 8px', background: C.bg, borderRadius: 6, fontSize: 12 }}>{p.cat}</span>
-              </td>
-              <td style={{ ...td, color: C.amber, fontWeight: 600 }}>${Number(p.price).toFixed(2)}</td>
-              <td style={td}>
-                <button onClick={() => toggle(p)} style={{ background: 'transparent', border: 0, cursor: 'pointer', padding: 0 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: p.active ? C.green : C.muted }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: p.active ? C.green : C.muted }} />
-                    {p.active ? 'Activo' : 'Inactivo'}
+                <button onClick={() => toggle(r)} style={{ background: 'transparent', border: 0, cursor: 'pointer', padding: 0 }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: r.active ? C.green : C.muted }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: r.active ? C.green : C.muted }} />
+                    {r.active ? 'Visible' : 'Oculto'}
                   </span>
                 </button>
               </td>
               <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                <button onClick={() => openEdit(p)} style={iconBtn(C)} title="Editar">
+                <button onClick={() => openEdit(r)} style={iconBtn(C)} title="Editar">
                   ✎
                 </button>
-                <button onClick={() => remove(p.id)} style={iconBtn(C, C.red)} title="Eliminar">
+                <button onClick={() => remove(r.id)} style={iconBtn(C, C.red)} title="Eliminar">
                   🗑
                 </button>
               </td>
@@ -125,7 +123,7 @@ export default function ProductsClient({ products }: { products: Product[] }) {
           {shown.length === 0 && (
             <tr>
               <td colSpan={6} style={{ ...td, textAlign: 'center', color: C.muted }}>
-                Sin productos en esta categoría.
+                Sin comentarios en este filtro.
               </td>
             </tr>
           )}
@@ -133,62 +131,42 @@ export default function ProductsClient({ products }: { products: Product[] }) {
       </table>
 
       {open && (
-        <Modal onClose={() => setOpen(false)} title={editing ? 'Editar producto' : 'Nuevo producto'}>
+        <Modal onClose={() => setOpen(false)} title={editing ? 'Editar comentario' : 'Nuevo comentario'}>
           <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {editing && <input type="hidden" name="id" value={editing.id} />}
-            <Field label="Nombre">
-              <input name="name" required defaultValue={editing?.name} style={inp(C)} />
+            <Field label="Autor">
+              <input name="name" required defaultValue={editing?.name} placeholder="Camila R." style={inp(C)} />
             </Field>
-            {editing ? (
-              <Field label="Código (SKU) — fijo">
-                <input value={editing.sku} disabled style={{ ...inp(C), opacity: 0.6 }} />
-                <input type="hidden" name="sku" value={editing.sku} />
-                <input type="hidden" name="cat" value={editing.cat} />
-              </Field>
-            ) : (
-              <Field label="Tipo de producto (define categoría y código)">
-                <select name="prefix" defaultValue="DLC" style={inp(C)}>
-                  <option value="DLC">Dulces (DLC)</option>
-                  <option value="SLD">Salados (SLD)</option>
-                  <option value="BBD">Bebidas (BBD)</option>
-                </select>
-                <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
-                  El código SKU se genera automático y único (p. ej. DLC-009).
-                </div>
-              </Field>
-            )}
-            <Field label="Precio (USD)">
-              <input name="price" type="number" step="0.01" required defaultValue={editing?.price} style={inp(C)} />
-            </Field>
-            <Field label="Descripción (se muestra en el landing)">
+            <Field label="Comentario (se muestra en el landing)">
               <textarea
-                name="description"
-                rows={2}
-                defaultValue={editing?.description || ''}
-                placeholder="Ingredientes, p. ej. Plátano, manjar, Nutella…"
+                name="text"
+                rows={3}
+                required
+                defaultValue={editing?.text || ''}
+                placeholder="El King Kong es absurdamente bueno…"
                 style={{ ...inp(C), height: 'auto', padding: '10px 12px', resize: 'vertical' }}
               />
             </Field>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <Field label="Dulzura (0–5)">
-                <select name="sweet" defaultValue={String(editing?.sweet ?? 0)} style={inp(C)}>
-                  {[0, 1, 2, 3, 4, 5].map((n) => (
+              <Field label="Estrellas">
+                <select name="stars" defaultValue={String(editing?.stars ?? 5)} style={inp(C)}>
+                  {[5, 4, 3, 2, 1].map((n) => (
                     <option key={n} value={n}>
-                      {n === 0 ? '— (sin medir)' : '★'.repeat(n)}
+                      {'★'.repeat(n)}
                     </option>
                   ))}
                 </select>
               </Field>
-              <Field label="Etiqueta">
-                <input name="tag" defaultValue={editing?.tag || ''} placeholder="TOP, NUEVO…" style={inp(C)} />
+              <Field label="Orden (menor = primero)">
+                <input name="sort" type="number" defaultValue={editing?.sort ?? 0} style={inp(C)} />
               </Field>
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.ink }}>
               <input type="checkbox" name="active" defaultChecked={editing ? editing.active : true} />
-              Producto activo
+              Visible en el landing
             </label>
             <button type="submit" disabled={pending} style={{ ...btn(C), height: 42, opacity: pending ? 0.7 : 1 }}>
-              {pending ? 'Guardando…' : 'Guardar producto'}
+              {pending ? 'Guardando…' : 'Guardar comentario'}
             </button>
           </form>
         </Modal>

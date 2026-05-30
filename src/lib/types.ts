@@ -6,7 +6,6 @@ export type Product = {
   name: string;
   cat: 'Dulces' | 'Salados' | 'Bebidas';
   price: number;
-  stock: number;
   active: boolean;
   description: string | null;
   sweet: number | null;
@@ -21,6 +20,47 @@ export type Customer = {
   orders: number;
   total: number;
   last: string | null;
+};
+
+export type Review = {
+  id: string;
+  name: string;
+  text: string;
+  stars: number;
+  active: boolean;
+  sort: number;
+  created_at: string;
+};
+
+export type Ingredient = {
+  id: string;
+  name: string;
+  unit: 'g' | 'ml' | 'unidad';
+  stock: number;
+  threshold: number;
+  avg_cost: number;
+  active: boolean;
+};
+
+export type Purchase = {
+  id: string;
+  ingredient_id: string | null;
+  ingredient_name: string;
+  qty_display: number;
+  unit: string;
+  qty_canon: number;
+  total_cost: number;
+  created_at: string;
+};
+
+// Línea de receta con datos del ingrediente para mostrar.
+export type RecipeLine = {
+  id: string;
+  product_id: string;
+  ingredient_id: string;
+  ingredient_name: string;
+  unit: 'g' | 'ml' | 'unidad';
+  qty: number;
 };
 
 export type Order = {

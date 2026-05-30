@@ -9,11 +9,13 @@ const NAV = [
   { href: '/crm', label: 'Dashboard', icon: '◧' },
   { href: '/crm/pedidos', label: 'Pedidos', icon: '🛵' },
   { href: '/crm/productos', label: 'Productos', icon: '🧇' },
+  { href: '/crm/inventario', label: 'Inventario', icon: '📦' },
   { href: '/crm/clientes', label: 'Clientes', icon: '👥' },
+  { href: '/crm/comentarios', label: 'Comentarios', icon: '💬' },
   { href: '/crm/reportes', label: 'Reportes', icon: '📊' },
 ];
 
-export default function Sidebar({ email }: { email: string }) {
+export default function Sidebar({ email, lowStock = 0 }: { email: string; lowStock?: number }) {
   const path = usePathname();
 
   return (
@@ -81,7 +83,27 @@ export default function Sidebar({ email }: { email: string }) {
               }}
             >
               <span style={{ width: 18, textAlign: 'center' }}>{n.icon}</span>
-              {n.label}
+              <span style={{ flex: 1 }}>{n.label}</span>
+              {n.href === '/crm/inventario' && lowStock > 0 && (
+                <span
+                  style={{
+                    minWidth: 18,
+                    height: 18,
+                    padding: '0 5px',
+                    borderRadius: 9,
+                    background: C.amber,
+                    color: C.bg,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                  title={`${lowStock} ingrediente(s) a renovar`}
+                >
+                  {lowStock}
+                </span>
+              )}
             </Link>
           );
         })}

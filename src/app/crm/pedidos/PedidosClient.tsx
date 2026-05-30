@@ -8,23 +8,69 @@ import { advanceOrder, archiveOrder, unarchiveOrder, archiveDelivered, createOrd
 
 type View = 'kanban' | 'lista' | 'historial';
 
-export default function PedidosClient({ orders, customers }: { orders: Order[]; customers: string[] }) {
+type Line = { name: string; price: number; qty: number };
+
+export default function PedidosClient({
+  orders,
+  customers,
+  products,
+}: {
+  orders: Order[];
+  customers: string[];
+  products: { name: string; price: number }[];
+}) {
   const [view, setView] = useState<View>('kanban');
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [lines, setLines] = useState<Line[]>([]);
+  const [prodSel, setProdSel] = useState('');
+  const [qtySel, setQtySel] = useState(1);
 
   const active = orders.filter((o) => !o.archived);
   const archived = orders.filter((o) => o.archived);
   const deliveredActive = active.filter((o) => o.estado === 'entregado');
+  const total = lines.reduce((s, l) => s + l.price * l.qty, 0);
+
+  function openNew() {
+    setLines([]);
+    setProdSel('');
+    setQtySel(1);
+    setOpen(true);
+  }
+  function addLine() {
+    const p = products.find((x) => x.name === prodSel);
+    if (!p || qtySel < 1) return;
+    setLines((prev) => {
+      const i = prev.findIndex((l) => l.name === p.name);
+      if (i >= 0) {
+        const c = [...prev];
+        c[i] = { ...c[i], qty: c[i].qty + qtySel };
+        return c;
+      }
+      return [...prev, { name: p.name, price: p.price, qty: qtySel }];
+    });
+    setProdSel('');
+    setQtySel(1);
+  }
+  function removeLine(name: string) {
+    setLines((prev) => prev.filter((l) => l.name !== name));
+  }
 
   const run = (fn: () => Promise<void>) => startTransition(() => void fn());
 
   function submitNew(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const fd = new FormData(e.currentTarget);
+    if (lines.length === 0) return;
+    const f = e.currentTarget;
+    const fd = new FormData();
+    fd.set('cliente', (f.elements.namedItem('cliente') as HTMLSelectElement).value);
+    fd.set('estado', (f.elements.namedItem('estado') as HTMLSelectElement).value);
+    fd.set('items', lines.map((l) => `${l.qty}× ${l.name}`).join(', '));
+    fd.set('total', String(total));
     startTransition(async () => {
       await createOrder(fd);
       setOpen(false);
+      setLines([]);
     });
   }
 
@@ -62,7 +108,7 @@ export default function PedidosClient({ orders, customers }: { orders: Order[]; 
             Archivar entregados ({deliveredActive.length})
           </button>
         )}
-        <button onClick={() => setOpen(true)} style={btn(C)}>
+        <button onClick={openNew} style={btn(C)}>
           + Nuevo pedido
         </button>
       </div>
@@ -172,25 +218,74 @@ export default function PedidosClient({ orders, customers }: { orders: Order[]; 
                   ))}
                 </select>
               </Field>
-              <Field label="Items (resumen)">
-                <input name="items" required placeholder="2× King Kong, 1× Mocca" style={inp(C)} />
-              </Field>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <Field label="Total (USD)">
-                  <input name="total" type="number" step="0.01" required placeholder="0.00" style={inp(C)} />
-                </Field>
-                <Field label="Estado inicial">
-                  <select name="estado" defaultValue="recibido" style={inp(C)}>
-                    {STATUS_ORDER.map((s) => (
-                      <option key={s} value={s}>
-                        {ESTADOS[s].label}
+              <Field label="Agregar productos">
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <select value={prodSel} onChange={(e) => setProdSel(e.target.value)} style={{ ...inp(C), flex: 1 }}>
+                    <option value="">Producto…</option>
+                    {products.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name} — ${p.price.toFixed(2)}
                       </option>
                     ))}
                   </select>
-                </Field>
-              </div>
-              <button type="submit" disabled={pending} style={{ ...btn(C), height: 42, opacity: pending ? 0.7 : 1 }}>
-                {pending ? 'Creando…' : 'Crear pedido'}
+                  <input
+                    type="number"
+                    min={1}
+                    value={qtySel}
+                    onChange={(e) => setQtySel(Math.max(1, Number(e.target.value)))}
+                    style={{ ...inp(C), width: 64 }}
+                  />
+                  <button type="button" onClick={addLine} disabled={!prodSel} style={{ ...btn(C), whiteSpace: 'nowrap', opacity: prodSel ? 1 : 0.5 }}>
+                    Añadir
+                  </button>
+                </div>
+              </Field>
+
+              {lines.length > 0 && (
+                <div style={{ border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }}>
+                  {lines.map((l) => (
+                    <div
+                      key={l.name}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${C.line}`, fontSize: 13 }}
+                    >
+                      <span style={{ flex: 1 }}>
+                        <strong>{l.qty}×</strong> {l.name}
+                        <span style={{ color: C.muted }}> · ${l.price.toFixed(2)}</span>
+                      </span>
+                      <span style={{ color: C.ink }}>${(l.price * l.qty).toFixed(2)}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeLine(l.name)}
+                        title="Quitar"
+                        style={{ background: 'transparent', border: 0, color: C.red, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', fontWeight: 700 }}>
+                    <span>Total (auto)</span>
+                    <span style={{ color: C.amber }}>${total.toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+
+              <Field label="Estado inicial">
+                <select name="estado" defaultValue="recibido" style={inp(C)}>
+                  {STATUS_ORDER.map((s) => (
+                    <option key={s} value={s}>
+                      {ESTADOS[s].label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <button
+                type="submit"
+                disabled={pending || lines.length === 0}
+                style={{ ...btn(C), height: 42, opacity: pending || lines.length === 0 ? 0.5 : 1 }}
+              >
+                {pending ? 'Creando…' : `Crear pedido · $${total.toFixed(2)}`}
               </button>
             </form>
           </div>

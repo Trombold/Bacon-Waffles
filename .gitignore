@@ -10,3 +10,6 @@ next-env.d.ts
 # artefactos de prueba (screenshots Playwright en la raíz)
 /*.png
 .playwright-mcp/
+
+# TypeScript incremental build info
+tsconfig.tsbuildinfo
