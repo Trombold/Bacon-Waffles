@@ -8,7 +8,7 @@ import { advanceOrder, archiveOrder, unarchiveOrder, archiveDelivered, createOrd
 
 type View = 'kanban' | 'lista' | 'historial';
 
-type Line = { name: string; price: number; qty: number };
+type Line = { id: string; name: string; price: number; qty: number };
 
 export default function PedidosClient({
   orders,
@@ -17,7 +17,7 @@ export default function PedidosClient({
 }: {
   orders: Order[];
   customers: string[];
-  products: { name: string; price: number }[];
+  products: { id: string; name: string; price: number }[];
 }) {
   const [view, setView] = useState<View>('kanban');
   const [open, setOpen] = useState(false);
@@ -38,22 +38,22 @@ export default function PedidosClient({
     setOpen(true);
   }
   function addLine() {
-    const p = products.find((x) => x.name === prodSel);
+    const p = products.find((x) => x.id === prodSel);
     if (!p || qtySel < 1) return;
     setLines((prev) => {
-      const i = prev.findIndex((l) => l.name === p.name);
+      const i = prev.findIndex((l) => l.id === p.id);
       if (i >= 0) {
         const c = [...prev];
         c[i] = { ...c[i], qty: c[i].qty + qtySel };
         return c;
       }
-      return [...prev, { name: p.name, price: p.price, qty: qtySel }];
+      return [...prev, { id: p.id, name: p.name, price: p.price, qty: qtySel }];
     });
     setProdSel('');
     setQtySel(1);
   }
-  function removeLine(name: string) {
-    setLines((prev) => prev.filter((l) => l.name !== name));
+  function removeLine(id: string) {
+    setLines((prev) => prev.filter((l) => l.id !== id));
   }
 
   const run = (fn: () => Promise<void>) => startTransition(() => void fn());
@@ -223,7 +223,7 @@ export default function PedidosClient({
                   <select value={prodSel} onChange={(e) => setProdSel(e.target.value)} style={{ ...inp(C), flex: 1 }}>
                     <option value="">Producto…</option>
                     {products.map((p) => (
-                      <option key={p.name} value={p.name}>
+                      <option key={p.id} value={p.id}>
                         {p.name} — ${p.price.toFixed(2)}
                       </option>
                     ))}
@@ -245,7 +245,7 @@ export default function PedidosClient({
                 <div style={{ border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }}>
                   {lines.map((l) => (
                     <div
-                      key={l.name}
+                      key={l.id}
                       style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${C.line}`, fontSize: 13 }}
                     >
                       <span style={{ flex: 1 }}>
@@ -255,7 +255,7 @@ export default function PedidosClient({
                       <span style={{ color: C.ink }}>${(l.price * l.qty).toFixed(2)}</span>
                       <button
                         type="button"
-                        onClick={() => removeLine(l.name)}
+                        onClick={() => removeLine(l.id)}
                         title="Quitar"
                         style={{ background: 'transparent', border: 0, color: C.red, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
                       >

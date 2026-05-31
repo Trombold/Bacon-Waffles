@@ -1,7 +1,7 @@
 import { createPublicClient } from '@/lib/supabase/public';
 import { MENU as STATIC_MENU, type MenuItem } from '@/lib/data';
 
-export type MenuGroups = { dulces: MenuItem[]; salados: MenuItem[]; bebidas: MenuItem[] };
+export type MenuGroups = { dulces: MenuItem[]; salados: MenuItem[]; combos: MenuItem[]; bebidas: MenuItem[] };
 
 // Lee el menú público desde Supabase (productos activos). Si no hay credenciales
 // (preview local) o falla la consulta, cae al menú estático de data.ts.
@@ -30,7 +30,7 @@ export async function getMenu(): Promise<MenuGroups> {
           tag: p.tag ?? undefined,
         }));
 
-    return { dulces: byCat('Dulces'), salados: byCat('Salados'), bebidas: byCat('Bebidas') };
+    return { dulces: byCat('Dulces'), salados: byCat('Salados'), combos: byCat('Combos'), bebidas: byCat('Bebidas') };
   } catch {
     return STATIC_MENU;
   }

@@ -85,15 +85,15 @@ export async function getCustomerNames(): Promise<string[]> {
 }
 
 // Productos activos (nombre + precio) para construir un pedido con total automático.
-export async function getActiveProducts(): Promise<{ name: string; price: number }[]> {
+export async function getActiveProducts(): Promise<{ id: string; name: string; price: number }[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from('products')
-    .select('name, price, cat')
+    .select('id, name, price, cat')
     .eq('active', true)
     .order('cat')
     .order('name');
-  return (data || []).map((p) => ({ name: p.name, price: Number(p.price) }));
+  return (data || []).map((p) => ({ id: p.id as string, name: p.name, price: Number(p.price) }));
 }
 
 // ───────── Inventario ─────────

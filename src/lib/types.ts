@@ -4,7 +4,7 @@ export type Product = {
   id: string;
   sku: string;
   name: string;
-  cat: 'Dulces' | 'Salados' | 'Bebidas';
+  cat: 'Dulces' | 'Salados' | 'Combos' | 'Bebidas';
   price: number;
   active: boolean;
   description: string | null;

@@ -5,7 +5,7 @@ import { CRM_THEME, CRM_THEME as C } from '@/lib/theme';
 import type { Product } from '@/lib/types';
 import { saveProduct, deleteProduct, toggleProduct } from '@/app/crm/actions';
 
-const CATS = ['Todos', 'Dulces', 'Salados', 'Bebidas', 'Inactivos'] as const;
+const CATS = ['Todos', 'Dulces', 'Salados', 'Combos', 'Bebidas', 'Inactivos'] as const;
 
 export default function ProductsClient({ products }: { products: Product[] }) {
   const [filter, setFilter] = useState<(typeof CATS)[number]>('Todos');
@@ -150,6 +150,7 @@ export default function ProductsClient({ products }: { products: Product[] }) {
                 <select name="prefix" defaultValue="DLC" style={inp(C)}>
                   <option value="DLC">Dulces (DLC)</option>
                   <option value="SLD">Salados (SLD)</option>
+                  <option value="CMB">Combos (CMB)</option>
                   <option value="BBD">Bebidas (BBD)</option>
                 </select>
                 <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>

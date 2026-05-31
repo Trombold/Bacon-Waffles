@@ -25,7 +25,7 @@ export type MenuItem = {
   tag?: string;
 };
 
-export const MENU: Record<'dulces' | 'salados' | 'bebidas', MenuItem[]> = {
+export const MENU: Record<'dulces' | 'salados' | 'combos' | 'bebidas', MenuItem[]> = {
   dulces: [
     { name: 'King Kong', price: 4.75, desc: 'Plátano, manjar, Nutella, galletas Oreo y chantilly', sweet: 5, tag: 'TOP' },
     { name: 'S.Berry Fields', price: 5.0, desc: "Nutella, mermelada de frutos rojos, banana, fresas, Oreo y Hershey's", sweet: 5 },
@@ -41,6 +41,11 @@ export const MENU: Record<'dulces' | 'salados' | 'bebidas', MenuItem[]> = {
     { name: 'Cheddar Bacon', price: 5.5, desc: 'Doble cheddar, doble tocino BBQ, lechuga crespa y tomate cherry' },
     { name: 'Carbonatta', price: 5.5, desc: 'Crema salteada con tocino, vino, mozzarella, parmesano y papas al hilo' },
     { name: 'Americano', price: 4.7, desc: 'Huevos (revueltos o fritos), tocino, papas al hilo y miel de maple' },
+  ],
+  combos: [
+    // Solo los combos activos (los inactivos viven en la DB con active=false y no se muestran).
+    { name: 'Combo Salado', price: 6.0, desc: 'Waffle de sal a elección + té helado de 250 ml' },
+    { name: 'Combo de Frío', price: 7.75, desc: 'Waffle de dulce a elección + chocolate caliente' },
   ],
   bebidas: [
     { name: 'Mocca', price: 3.75, desc: 'Café, caramelo y leche con hielo, nata y espiral de caramelo' },
@@ -70,5 +75,6 @@ export const HERO_IMG = {
   dulce: 'https://images.unsplash.com/photo-1562376552-0d160a2f238d?w=900&q=80',
   salado: 'https://images.unsplash.com/photo-1528207776546-365bb710ee93?w=900&q=80',
   bebida: 'https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=900&q=80',
+  combo: 'https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=900&q=80',
   story: 'https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=1200&q=80',
 };

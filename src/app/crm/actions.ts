@@ -7,9 +7,10 @@ import { toCanonical, type CanonUnit } from '@/lib/units';
 
 // ───────── Productos ─────────
 
-const PREFIX_CAT: Record<string, 'Dulces' | 'Salados' | 'Bebidas'> = {
+const PREFIX_CAT: Record<string, 'Dulces' | 'Salados' | 'Combos' | 'Bebidas'> = {
   DLC: 'Dulces',
   SLD: 'Salados',
+  CMB: 'Combos',
   BBD: 'Bebidas',
 };
 

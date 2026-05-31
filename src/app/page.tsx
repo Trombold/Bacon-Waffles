@@ -33,22 +33,29 @@ function MenuCategory({
   index,
   img,
   items,
+  note,
 }: {
   label: string;
   index: number;
   img: string;
   items: MenuItem[];
+  note?: string;
 }) {
   return (
     <div className="menu-cat">
       <div className="menu-cat-aside">
-        <div className="menu-cat-img">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={img} alt={label} />
-        </div>
         <div className="display menu-cat-title">{label}</div>
         <div className="mono muted menu-cat-meta">
           0{index} · {items.length} opciones
+        </div>
+        {note && (
+          <p className="menu-cat-note">
+            <span className="star">★</span> {note}
+          </p>
+        )}
+        <div className="menu-cat-img">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={img} alt={label} />
         </div>
       </div>
       <div className="menu-cat-list">
@@ -121,10 +128,12 @@ export default async function Landing() {
     .v1d section.menu { padding: 96px 64px; background: ${P.paper}; }
     .v1d .menu-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 56px; flex-wrap: wrap; gap: 16px; }
     .v1d .menu-cat { display: grid; grid-template-columns: 320px 1fr; gap: 64px; align-items: flex-start; margin-bottom: 96px; }
-    .v1d .menu-cat-img { aspect-ratio: 4/5; overflow: hidden; border-radius: 2px; border: 1px solid ${P.line}; }
+    .v1d .menu-cat-img { aspect-ratio: 4/5; overflow: hidden; border-radius: 2px; border: 1px solid ${P.line}; margin-top: 24px; }
     .v1d .menu-cat-img img { width: 100%; height: 100%; object-fit: cover; filter: saturate(0.95); }
-    .v1d .menu-cat-title { font-size: 56px; margin-top: 16px; font-style: italic; }
+    .v1d .menu-cat-title { font-size: 56px; margin-top: 0; font-style: italic; }
     .v1d .menu-cat-meta { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; }
+    .v1d .menu-cat-note { font-size: 12px; line-height: 1.55; color: ${P.muted}; margin: 16px 0 0; max-width: 240px; }
+    .v1d .menu-cat-note .star { font-size: 13px; margin-right: 4px; }
     .v1d .menu-row { display: grid; grid-template-columns: 1fr auto; gap: 24px; padding: 24px 0; border-bottom: 1px solid ${P.line}; align-items: baseline; }
     .v1d .menu-row-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
     .v1d .menu-row-name { font-size: 32px; margin: 0; font-weight: 500; }
@@ -213,9 +222,9 @@ export default async function Landing() {
               <span className="brand">en Loja.</span>
             </h1>
             <p className="muted hero-lead">
-              Cono de waffle belga cocinado al momento, relleno con ingredientes seleccionados.{' '}
-              <em style={{ color: P.brand, fontStyle: 'normal', fontWeight: 600 }}>Los mejores de la city.</em>{' '}
-              Solo entrega a domicilio — del obrador a tu puerta.
+              El mejor waffle de Loja no está en ningún local. Está en camino a tu casa.{' '}
+              Ingredientes frescos, <em style={{ color: P.brand, fontStyle: 'normal', fontWeight: 600 }}>los mejores de la city</em>{' '}
+              — listos para llegar donde estás.
             </p>
             <div className="hero-ctas">
               <a href={waLink()} target="_blank" rel="noopener" className="cta">
@@ -280,14 +289,32 @@ export default async function Landing() {
           </div>
         </div>
 
-        <MenuCategory label="Dulces" index={1} img={HERO_IMG.dulce} items={menu.dulces} />
+        <MenuCategory
+          label="Dulces"
+          index={1}
+          img={HERO_IMG.dulce}
+          items={menu.dulces}
+          note="Las estrellas marcan el dulzor: 1 = suave, 5 = muy dulce."
+        />
+        <div
+          className="mono brand"
+          style={{
+            fontSize: 14,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            fontWeight: 500,
+            textAlign: 'right',
+            marginTop: -64,
+            marginBottom: 96,
+          }}
+        >
+          + Bola de helado para cualquier waffle · $1.00
+        </div>
         <MenuCategory label="Salados" index={2} img={HERO_IMG.salado} items={menu.salados} />
-        <MenuCategory label="Bebidas" index={3} img={HERO_IMG.bebida} items={menu.bebidas} />
+        <MenuCategory label="Combos" index={3} img={HERO_IMG.combo} items={menu.combos} />
+        <MenuCategory label="Bebidas" index={4} img={HERO_IMG.bebida} items={menu.bebidas} />
 
-        <div className="menu-foot">
-          <div className="mono brand" style={{ fontSize: 15, letterSpacing: '0.12em', textTransform: 'uppercase', fontWeight: 500 }}>
-            + Bola de helado para cualquier waffle · $1.00
-          </div>
+        <div className="menu-foot" style={{ justifyContent: 'flex-end' }}>
           <a href={waLink()} target="_blank" rel="noopener" className="cta">Pedir ahora →</a>
         </div>
       </section>
