@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/supabase/server';
 import { nextStatus, type OrderStatus } from '@/lib/theme';
 import { toCanonical, type CanonUnit } from '@/lib/units';
+import { getActiveProducts, getActivePromotions } from '@/lib/crm-queries';
+import { evalPromos, type CartLine } from '@/lib/promo-engine';
 
 // ───────── Productos ─────────
 
@@ -374,6 +376,86 @@ export async function deleteCustomer(formData: FormData) {
   revalidatePath('/crm/clientes');
 }
 
+// ───────── Promociones ─────────
+
+function numOrNull(fd: FormData, key: string): number | null {
+  const raw = String(fd.get(key) ?? '').trim();
+  if (raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+function strOrNull(fd: FormData, key: string): string | null {
+  const raw = String(fd.get(key) ?? '').trim();
+  return raw === '' ? null : raw;
+}
+
+export async function savePromotion(formData: FormData) {
+  const { supabase } = await requireUser();
+  const id = String(formData.get('id') || '');
+
+  // Días: checkboxes name="days" con valores 0..6 (getDay). Sin marcar → null (todos).
+  const days = formData.getAll('days').map((d) => Number(d)).filter((d) => d >= 0 && d <= 6);
+  const daysMask = days.length ? days.reduce((m, d) => m | (1 << d), 0) : null;
+
+  const type = String(formData.get('type') || 'free_item');
+  const payload = {
+    name: String(formData.get('name') || '').trim(),
+    description: strOrNull(formData, 'description'),
+    type,
+    trigger_scope: String(formData.get('trigger_scope') || 'category'),
+    trigger_ref: strOrNull(formData, 'trigger_ref'),
+    trigger_qty: Math.max(1, numOrNull(formData, 'trigger_qty') ?? 1),
+    // El producto regalo solo aplica a free_item.
+    reward_product_id: type === 'free_item' ? strOrNull(formData, 'reward_product_id') : null,
+    reward_qty: Math.max(1, numOrNull(formData, 'reward_qty') ?? 1),
+    reward_value: numOrNull(formData, 'reward_value') ?? 0,
+    reward_max_per_order: Math.max(1, numOrNull(formData, 'reward_max_per_order') ?? 1),
+    min_order_total: numOrNull(formData, 'min_order_total'),
+    starts_at: strOrNull(formData, 'starts_at'),
+    ends_at: strOrNull(formData, 'ends_at'),
+    days_mask: daysMask,
+    time_from: strOrNull(formData, 'time_from'),
+    time_to: strOrNull(formData, 'time_to'),
+    max_redemptions: numOrNull(formData, 'max_redemptions'),
+    stackable: formData.get('stackable') === 'on',
+    active: formData.get('active') === 'on',
+    show_on_landing: formData.get('show_on_landing') === 'on',
+  };
+
+  if (id) {
+    await supabase.from('promotions').update(payload).eq('id', id);
+  } else {
+    await supabase.from('promotions').insert(payload);
+  }
+  revalidatePath('/crm/promociones');
+  revalidatePath('/crm');
+  revalidatePath('/'); // sección de promos del landing
+}
+
+export async function deletePromotion(formData: FormData) {
+  const { supabase } = await requireUser();
+  await supabase.from('promotions').delete().eq('id', String(formData.get('id')));
+  revalidatePath('/crm/promociones');
+  revalidatePath('/');
+}
+
+export async function togglePromotion(formData: FormData) {
+  const { supabase } = await requireUser();
+  const id = String(formData.get('id'));
+  const active = formData.get('active') === 'true';
+  await supabase.from('promotions').update({ active: !active }).eq('id', id);
+  revalidatePath('/crm/promociones');
+  revalidatePath('/');
+}
+
+// Reinicia el contador de canjes (p. ej. para reabrir una promo agotada).
+export async function resetPromotionRedemptions(formData: FormData) {
+  const { supabase } = await requireUser();
+  await supabase.from('promotions').update({ redemptions: 0 }).eq('id', String(formData.get('id')));
+  revalidatePath('/crm/promociones');
+  revalidatePath('/');
+}
+
 // ───────── Pedidos ─────────
 
 export async function advanceOrder(formData: FormData) {
@@ -402,26 +484,88 @@ async function nextOrderCode(
   return `#${max + 1}`;
 }
 
+// Re-evalúa las promos del lado servidor (FUENTE DE VERDAD) a partir del carrito
+// estructurado que envía el cliente. Devuelve el texto de items final (con líneas
+// regalo), el total ya descontado y las promos aplicadas (para contabilizar canjes).
+// Nunca confía en el total calculado por el navegador.
+async function buildOrderFromCart(
+  cart: { id: string; qty: number }[]
+): Promise<{ items: string; total: number; appliedPromoIds: string[] } | null> {
+  if (!Array.isArray(cart) || cart.length === 0) return null;
+
+  const [products, promos] = await Promise.all([getActiveProducts(), getActivePromotions()]);
+  const byId = new Map(products.map((p) => [p.id, p]));
+
+  const lines: CartLine[] = [];
+  for (const c of cart) {
+    const p = byId.get(c.id);
+    const qty = Math.max(1, Math.floor(Number(c.qty) || 0));
+    if (p) lines.push({ id: p.id, name: p.name, cat: p.cat, price: p.price, qty });
+  }
+  if (lines.length === 0) return null;
+
+  const subtotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
+  const result = evalPromos(lines, promos);
+
+  const baseText = lines.map((l) => `${l.qty}× ${l.name}`);
+  const rewardText = result.rewardLines.map((r) => `${r.qty}× ${r.name} 🎁`);
+  const items = [...baseText, ...rewardText].join(', ');
+  const total = Math.round((subtotal - result.discount) * 100) / 100;
+
+  return { items, total, appliedPromoIds: result.applied.map((a) => a.promo_id) };
+}
+
+// Suma 1 canje a cada promo aplicada (una vez por pedido). Read-modify-write:
+// la baja concurrencia del obrador lo hace seguro sin transacción.
+async function tallyRedemptions(
+  supabase: Awaited<ReturnType<typeof requireUser>>['supabase'],
+  promoIds: string[]
+) {
+  if (promoIds.length === 0) return;
+  const { data } = await supabase.from('promotions').select('id, redemptions').in('id', promoIds);
+  for (const p of data || []) {
+    await supabase.from('promotions').update({ redemptions: Number(p.redemptions) + 1 }).eq('id', p.id);
+  }
+}
+
 export async function createOrder(formData: FormData) {
   const { supabase } = await requireUser();
   const estado = String(formData.get('estado') || 'recibido') as OrderStatus;
   const code = await nextOrderCode(supabase);
   const finalEstado = ['recibido', 'cocinando', 'en_camino', 'entregado'].includes(estado) ? estado : 'recibido';
+  const metodoPago = String(formData.get('metodo_pago') || 'efectivo') === 'transferencia' ? 'transferencia' : 'efectivo';
+
+  // Si el cliente envía el carrito estructurado, el servidor recalcula items/total
+  // aplicando promos (autoritativo). Si no, cae al texto/total legados.
+  let cart: { id: string; qty: number }[] = [];
+  try {
+    cart = JSON.parse(String(formData.get('cart') || '[]'));
+  } catch {
+    cart = [];
+  }
+  const built = await buildOrderFromCart(cart);
+  const items = built ? built.items : String(formData.get('items') || '').trim();
+  const total = built ? built.total : Number(formData.get('total') || 0);
+
   const { data: created } = await supabase
     .from('orders')
     .insert({
       code,
       cliente: String(formData.get('cliente') || '').trim() || 'Cliente WhatsApp',
-      items: String(formData.get('items') || '').trim(),
-      total: Number(formData.get('total') || 0),
+      items,
+      total,
       estado: finalEstado,
+      metodo_pago: metodoPago,
     })
     .select('id')
     .single();
+
+  if (built) await tallyRedemptions(supabase, built.appliedPromoIds);
   // Si nace ya en "cocinando" (o más avanzado), descuenta inventario de una vez.
   if (created && finalEstado !== 'recibido') await consumeForOrder(supabase, created.id);
   revalidatePath('/crm/pedidos');
   revalidatePath('/crm');
+  revalidatePath('/crm/promociones');
 }
 
 export async function archiveOrder(formData: FormData) {

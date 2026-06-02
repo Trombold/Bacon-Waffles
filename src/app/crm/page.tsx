@@ -24,6 +24,12 @@ export default async function Dashboard() {
           label="Ventas hoy"
           value={`$${stats.ventasHoy.toFixed(2)}`}
           sub={`ticket promedio $${stats.ticketPromedio.toFixed(2)}`}
+          extra={
+            <div style={{ display: 'flex', gap: 14, fontSize: 12, flexWrap: 'wrap' }}>
+              <span style={{ color: C.green, fontWeight: 600 }}>💵 ${stats.ventasHoyEfectivo.toFixed(2)}</span>
+              <span style={{ color: C.blue, fontWeight: 600 }}>🏦 ${stats.ventasHoyTransferencia.toFixed(2)}</span>
+            </div>
+          }
         />
         <StatCard
           label="Pedidos semana"

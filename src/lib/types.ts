@@ -1,4 +1,4 @@
-import type { OrderStatus } from './theme';
+import type { OrderStatus, PaymentMethod } from './theme';
 
 export type Product = {
   id: string;
@@ -63,6 +63,42 @@ export type RecipeLine = {
   qty: number;
 };
 
+export type PromoType = 'free_item' | 'percent' | 'fixed';
+export type PromoScope = 'product' | 'category' | 'order';
+
+// Fila completa de la tabla promotions, enriquecida con datos del producto
+// recompensa (nombre + precio) para que el motor pueda mostrar la línea regalo
+// sin un join adicional en tiempo de evaluación.
+export type Promotion = {
+  id: string;
+  name: string;
+  description: string | null;
+  type: PromoType;
+  trigger_scope: PromoScope;
+  trigger_ref: string | null;
+  trigger_qty: number;
+  reward_product_id: string | null;
+  reward_name: string | null;   // join products.name (denormalizado en query)
+  reward_price: number;         // join products.price (valor retail del regalo)
+  reward_qty: number;
+  reward_value: number;
+  reward_max_per_order: number;
+  min_order_total: number | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  days_mask: number | null;
+  time_from: string | null;
+  time_to: string | null;
+  max_redemptions: number | null;
+  redemptions: number;
+  stackable: boolean;
+  active: boolean;
+  show_on_landing: boolean;
+  created_at: string;
+  // Calculado (solo en getPromotions del CRM): costo de receta del regalo.
+  reward_cost?: number;
+};
+
 export type Order = {
   id: string;
   code: string;
@@ -71,6 +107,7 @@ export type Order = {
   total: number;
   hora: string;
   estado: OrderStatus;
+  metodo_pago: PaymentMethod;
   archived: boolean;
   created_at: string;
 };

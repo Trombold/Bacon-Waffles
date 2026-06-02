@@ -6,12 +6,14 @@ export function StatCard({
   sub,
   accent,
   trend,
+  extra,
 }: {
   label: string;
   value: string;
   sub?: string;
   accent?: string;
   trend?: string;
+  extra?: React.ReactNode;
 }) {
   return (
     <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 20 }}>
@@ -32,6 +34,7 @@ export function StatCard({
         {trend && <span style={{ color: C.green, fontWeight: 600 }}>↑ {trend}</span>}
         {sub}
       </div>
+      {extra && <div style={{ marginTop: 10 }}>{extra}</div>}
     </div>
   );
 }

@@ -1,23 +1,26 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { CRM_THEME, CRM_THEME as C, ESTADOS, STATUS_ORDER, type OrderStatus } from '@/lib/theme';
-import type { Order } from '@/lib/types';
+import { CRM_THEME, CRM_THEME as C, ESTADOS, STATUS_ORDER, METODOS_PAGO, PAYMENT_ORDER, type OrderStatus, type PaymentMethod } from '@/lib/theme';
+import type { Order, Promotion } from '@/lib/types';
 import { EstadoChip } from '@/components/crm/ui';
+import { evalPromos, type CartLine } from '@/lib/promo-engine';
 import { advanceOrder, archiveOrder, unarchiveOrder, archiveDelivered, createOrder } from '@/app/crm/actions';
 
 type View = 'kanban' | 'lista' | 'historial';
 
-type Line = { id: string; name: string; price: number; qty: number };
+type Line = { id: string; name: string; cat: string; price: number; qty: number };
 
 export default function PedidosClient({
   orders,
   customers,
   products,
+  promotions = [],
 }: {
   orders: Order[];
   customers: string[];
-  products: { id: string; name: string; price: number }[];
+  products: { id: string; name: string; price: number; cat: string }[];
+  promotions?: Promotion[];
 }) {
   const [view, setView] = useState<View>('kanban');
   const [open, setOpen] = useState(false);
@@ -29,7 +32,12 @@ export default function PedidosClient({
   const active = orders.filter((o) => !o.archived);
   const archived = orders.filter((o) => o.archived);
   const deliveredActive = active.filter((o) => o.estado === 'entregado');
-  const total = lines.reduce((s, l) => s + l.price * l.qty, 0);
+  const subtotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
+
+  // Preview de promos (mismo motor que el servidor; el servidor recalcula al crear).
+  const cartLines: CartLine[] = lines.map((l) => ({ id: l.id, name: l.name, cat: l.cat, price: l.price, qty: l.qty }));
+  const promo = evalPromos(cartLines, promotions);
+  const total = Math.round((subtotal - promo.discount) * 100) / 100;
 
   function openNew() {
     setLines([]);
@@ -47,7 +55,7 @@ export default function PedidosClient({
         c[i] = { ...c[i], qty: c[i].qty + qtySel };
         return c;
       }
-      return [...prev, { id: p.id, name: p.name, price: p.price, qty: qtySel }];
+      return [...prev, { id: p.id, name: p.name, cat: p.cat, price: p.price, qty: qtySel }];
     });
     setProdSel('');
     setQtySel(1);
@@ -65,8 +73,12 @@ export default function PedidosClient({
     const fd = new FormData();
     fd.set('cliente', (f.elements.namedItem('cliente') as HTMLSelectElement).value);
     fd.set('estado', (f.elements.namedItem('estado') as HTMLSelectElement).value);
+    fd.set('metodo_pago', (f.elements.namedItem('metodo_pago') as HTMLSelectElement).value);
+    // Carrito estructurado → el servidor recalcula items/total y aplica promos.
+    fd.set('cart', JSON.stringify(lines.map((l) => ({ id: l.id, qty: l.qty }))));
+    // Legados (fallback si el servidor no recibe carrito): sin promo.
     fd.set('items', lines.map((l) => `${l.qty}× ${l.name}`).join(', '));
-    fd.set('total', String(total));
+    fd.set('total', String(subtotal));
     startTransition(async () => {
       await createOrder(fd);
       setOpen(false);
@@ -138,6 +150,7 @@ export default function PedidosClient({
                       </div>
                       <div style={{ fontSize: 13, marginBottom: 4 }}>{o.cliente}</div>
                       <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>{o.items}</div>
+                      <div style={{ marginBottom: 6 }}><PagoChip m={o.metodo_pago} /></div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: `1px solid ${C.line}`, paddingTop: 6 }}>
                         <strong style={{ color: C.amber }}>${o.total.toFixed(2)}</strong>
                         {col !== 'entregado' ? (
@@ -263,9 +276,36 @@ export default function PedidosClient({
                       </button>
                     </div>
                   ))}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', fontWeight: 700 }}>
-                    <span>Total (auto)</span>
-                    <span style={{ color: C.amber }}>${total.toFixed(2)}</span>
+                  {promo.applied.length > 0 && (
+                    <div style={{ borderTop: `1px solid ${C.line}`, background: `${C.green}11` }}>
+                      {promo.applied.map((a) => (
+                        <div key={a.promo_id} style={{ padding: '8px 12px', fontSize: 12, color: C.green }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                            <span>🎁</span> {a.name}
+                          </div>
+                          {a.rewardLines.map((rl, i) => (
+                            <div key={i} style={{ color: C.muted, marginLeft: 18 }}>
+                              + {rl.qty}× {rl.name} gratis
+                            </div>
+                          ))}
+                          {a.discount > 0 && (
+                            <div style={{ color: C.muted, marginLeft: 18 }}>− ${a.discount.toFixed(2)} de descuento</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ borderTop: `1px solid ${C.line}` }}>
+                    {promo.discount > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px 0', fontSize: 12, color: C.muted }}>
+                        <span>Subtotal</span>
+                        <span>${subtotal.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', fontWeight: 700 }}>
+                      <span>Total (auto)</span>
+                      <span style={{ color: C.amber }}>${total.toFixed(2)}</span>
+                    </div>
                   </div>
                 </div>
               )}
@@ -275,6 +315,16 @@ export default function PedidosClient({
                   {STATUS_ORDER.map((s) => (
                     <option key={s} value={s}>
                       {ESTADOS[s].label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Método de pago">
+                <select name="metodo_pago" defaultValue="efectivo" style={inp(C)}>
+                  {PAYMENT_ORDER.map((m) => (
+                    <option key={m} value={m}>
+                      {METODOS_PAGO[m].icon} {METODOS_PAGO[m].label}
                     </option>
                   ))}
                 </select>
@@ -327,7 +377,7 @@ function OrdersTable({
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ color: C.muted, textAlign: 'left', background: C.bg }}>
-            {['Pedido', 'Cliente', 'Items', 'Total', 'Hora', 'Estado', ''].map((h) => (
+            {['Pedido', 'Cliente', 'Items', 'Total', 'Pago', 'Hora', 'Estado', ''].map((h) => (
               <th key={h} style={th}>
                 {h}
               </th>
@@ -341,6 +391,7 @@ function OrdersTable({
               <td style={td}>{o.cliente}</td>
               <td style={{ ...td, color: C.muted }}>{o.items}</td>
               <td style={{ ...td, color: C.amber, fontWeight: 600 }}>${o.total.toFixed(2)}</td>
+              <td style={td}><PagoChip m={o.metodo_pago} /></td>
               <td style={{ ...td, color: C.muted }}>{o.hora}</td>
               <td style={td}>
                 <EstadoChip e={o.estado as OrderStatus} />
@@ -350,7 +401,7 @@ function OrdersTable({
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={7} style={{ ...td, textAlign: 'center', color: C.muted }}>
+              <td colSpan={8} style={{ ...td, textAlign: 'center', color: C.muted }}>
                 {empty}
               </td>
             </tr>
@@ -358,6 +409,29 @@ function OrdersTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function PagoChip({ m }: { m: PaymentMethod }) {
+  const p = METODOS_PAGO[m];
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        padding: '2px 8px',
+        borderRadius: 999,
+        background: `${p.color}22`,
+        color: p.color,
+        fontSize: 11,
+        fontWeight: 600,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span>{p.icon}</span>
+      {p.label}
+    </span>
   );
 }
 

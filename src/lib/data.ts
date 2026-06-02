@@ -5,8 +5,8 @@ export const BRAND = {
   tagline: 'Obrador artesanal · Solo a domicilio · Loja',
   whatsapp: '+593962691364',
   whatsappDisplay: '+593 96 269 1364',
-  schedule: 'Lun – Vie · 10:00 a 22:00',
-  scheduleShort: 'L–V · 10:00 – 22:00',
+  schedule: 'Lun – Dom · 10:00 a 22:00',
+  scheduleShort: 'L–D · 10:00 – 22:00',
   city: 'Loja, Ecuador',
   instagram: '@baconwaffles.lj',
 };

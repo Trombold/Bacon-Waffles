@@ -25,7 +25,17 @@ export default async function Reportes() {
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 16 }}>
-        <StatCard label="Ventas mes" value={money(r.ventasMes)} sub="mes en curso" />
+        <StatCard
+          label="Ventas mes"
+          value={money(r.ventasMes)}
+          sub="mes en curso"
+          extra={
+            <div style={{ display: 'flex', gap: 14, fontSize: 12, flexWrap: 'wrap' }}>
+              <span style={{ color: C.green, fontWeight: 600 }}>💵 {money(r.ventasMesEfectivo)}</span>
+              <span style={{ color: C.blue, fontWeight: 600 }}>🏦 {money(r.ventasMesTransferencia)}</span>
+            </div>
+          }
+        />
         <StatCard label="Gasto mes" value={money(r.gastoMes)} sub="compras de inventario" accent={C.red} />
         <StatCard
           label="Margen mes"

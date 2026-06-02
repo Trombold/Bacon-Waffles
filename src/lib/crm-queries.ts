@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
-import type { Product, Customer, Order, Review, Ingredient, Purchase, RecipeLine } from '@/lib/types';
-import type { OrderStatus } from '@/lib/theme';
+import type { Product, Customer, Order, Review, Ingredient, Purchase, RecipeLine, Promotion } from '@/lib/types';
+import type { OrderStatus, PaymentMethod } from '@/lib/theme';
 
 function hora(iso: string): string {
   return new Date(iso).toLocaleTimeString('es-EC', {
@@ -71,6 +71,7 @@ export async function getOrders(): Promise<Order[]> {
     items: o.items,
     total: Number(o.total),
     estado: o.estado as OrderStatus,
+    metodo_pago: (o.metodo_pago === 'transferencia' ? 'transferencia' : 'efectivo') as PaymentMethod,
     archived: Boolean(o.archived),
     hora: hora(o.created_at),
     created_at: o.created_at,
@@ -84,8 +85,9 @@ export async function getCustomerNames(): Promise<string[]> {
   return (data || []).map((c) => c.name);
 }
 
-// Productos activos (nombre + precio) para construir un pedido con total automático.
-export async function getActiveProducts(): Promise<{ id: string; name: string; price: number }[]> {
+// Productos activos (id, nombre, precio, categoría) para construir un pedido con
+// total automático. La categoría la consume el motor de promos (gatillo por cat).
+export async function getActiveProducts(): Promise<{ id: string; name: string; price: number; cat: string }[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from('products')
@@ -93,7 +95,89 @@ export async function getActiveProducts(): Promise<{ id: string; name: string; p
     .eq('active', true)
     .order('cat')
     .order('name');
-  return (data || []).map((p) => ({ id: p.id as string, name: p.name, price: Number(p.price) }));
+  return (data || []).map((p) => ({ id: p.id as string, name: p.name, price: Number(p.price), cat: String(p.cat) }));
+}
+
+// ───────── Promociones ─────────
+
+// Mapea una fila cruda de promotions a Promotion, enriqueciendo con el nombre y
+// precio del producto recompensa (productMap) y, opcionalmente, su costo de receta.
+type RawPromo = Record<string, unknown>;
+function mapPromo(
+  p: RawPromo,
+  productMap: Map<string, { name: string; price: number }>,
+  rewardCost?: Map<string, number>
+): Promotion {
+  const rid = (p.reward_product_id as string) || null;
+  const prod = rid ? productMap.get(rid) : undefined;
+  return {
+    id: p.id as string,
+    name: p.name as string,
+    description: (p.description as string) ?? null,
+    type: p.type as Promotion['type'],
+    trigger_scope: p.trigger_scope as Promotion['trigger_scope'],
+    trigger_ref: (p.trigger_ref as string) ?? null,
+    trigger_qty: Number(p.trigger_qty),
+    reward_product_id: rid,
+    reward_name: prod?.name ?? null,
+    reward_price: prod?.price ?? 0,
+    reward_qty: Number(p.reward_qty),
+    reward_value: Number(p.reward_value),
+    reward_max_per_order: Number(p.reward_max_per_order),
+    min_order_total: p.min_order_total != null ? Number(p.min_order_total) : null,
+    starts_at: (p.starts_at as string) ?? null,
+    ends_at: (p.ends_at as string) ?? null,
+    days_mask: p.days_mask != null ? Number(p.days_mask) : null,
+    time_from: (p.time_from as string) ?? null,
+    time_to: (p.time_to as string) ?? null,
+    max_redemptions: p.max_redemptions != null ? Number(p.max_redemptions) : null,
+    redemptions: Number(p.redemptions),
+    stackable: Boolean(p.stackable),
+    active: Boolean(p.active),
+    show_on_landing: Boolean(p.show_on_landing),
+    created_at: p.created_at as string,
+    reward_cost: rewardCost && rid ? rewardCost.get(rid) ?? 0 : undefined,
+  };
+}
+
+// Mapa id→{name,price} de TODOS los productos (incluye inactivos: un regalo puede
+// no estar en carta pero seguir teniendo nombre/precio para mostrar y consumir).
+async function productMap(
+  supabase: Awaited<ReturnType<typeof createClient>>
+): Promise<Map<string, { name: string; price: number }>> {
+  const { data } = await supabase.from('products').select('id, name, price');
+  return new Map((data || []).map((p) => [p.id as string, { name: p.name as string, price: Number(p.price) }]));
+}
+
+// Todas las promos (activas e inactivas) para el panel del CRM, con el costo de
+// receta del regalo (presupuesto): reward_cost = Σ receta.qty × ingrediente.avg_cost.
+export async function getPromotions(): Promise<Promotion[]> {
+  const supabase = await createClient();
+  const [{ data: promos }, pmap, { data: recipes }, { data: ings }] = await Promise.all([
+    supabase.from('promotions').select('*').order('created_at', { ascending: false }),
+    productMap(supabase),
+    supabase.from('recipes').select('product_id, ingredient_id, qty'),
+    supabase.from('ingredients').select('id, avg_cost'),
+  ]);
+
+  const avg = new Map((ings || []).map((i) => [i.id as string, Number(i.avg_cost)]));
+  const rewardCost = new Map<string, number>();
+  (recipes || []).forEach((r) => {
+    const c = (rewardCost.get(r.product_id) || 0) + Number(r.qty) * (avg.get(r.ingredient_id) || 0);
+    rewardCost.set(r.product_id, Math.round(c * 100) / 100);
+  });
+
+  return (promos || []).map((p) => mapPromo(p as RawPromo, pmap, rewardCost));
+}
+
+// Promos activas (para el motor: preview en pedidos y re-evaluación server-side).
+export async function getActivePromotions(): Promise<Promotion[]> {
+  const supabase = await createClient();
+  const [{ data: promos }, pmap] = await Promise.all([
+    supabase.from('promotions').select('*').eq('active', true),
+    productMap(supabase),
+  ]);
+  return (promos || []).map((p) => mapPromo(p as RawPromo, pmap));
 }
 
 // ───────── Inventario ─────────
@@ -172,6 +256,8 @@ export async function getMonthlyExpense(): Promise<number> {
 export type DashboardStats = {
   pedidosHoy: number;
   ventasHoy: number;
+  ventasHoyEfectivo: number;
+  ventasHoyTransferencia: number;
   pedidosSemana: number;
   ventasSemana: number;
   ticketPromedio: number;
@@ -190,12 +276,14 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
   const { data: orders } = await supabase
     .from('orders')
-    .select('items, total, created_at')
+    .select('items, total, created_at, metodo_pago')
     .gte('created_at', weekAgo);
 
   const today = startOfToday().getTime();
   let pedidosHoy = 0,
     ventasHoy = 0,
+    ventasHoyEfectivo = 0,
+    ventasHoyTransferencia = 0,
     pedidosSemana = 0,
     ventasSemana = 0;
 
@@ -203,11 +291,14 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   (orders || []).forEach((o) => {
     const t = new Date(o.created_at).getTime();
     const tot = Number(o.total);
+    const esTransf = o.metodo_pago === 'transferencia';
     pedidosSemana += 1;
     ventasSemana += tot;
     if (t >= today) {
       pedidosHoy += 1;
       ventasHoy += tot;
+      if (esTransf) ventasHoyTransferencia += tot;
+      else ventasHoyEfectivo += tot;
     }
     const key = new Date(o.created_at).toLocaleDateString('es-EC', { weekday: 'short' });
     byDay.set(key, (byDay.get(key) || 0) + tot);
@@ -239,6 +330,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   return {
     pedidosHoy,
     ventasHoy,
+    ventasHoyEfectivo,
+    ventasHoyTransferencia,
     pedidosSemana,
     ventasSemana,
     ticketPromedio: pedidosSemana ? ventasSemana / pedidosSemana : 0,
@@ -249,6 +342,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
 export type ReportStats = {
   ventasMes: number;
+  ventasMesEfectivo: number;
+  ventasMesTransferencia: number;
   pedidosMes: number;
   ticketMes: number;
   gastoMes: number;
@@ -267,7 +362,7 @@ export async function getReports(): Promise<ReportStats> {
 
   const { data: orders } = await supabase
     .from('orders')
-    .select('items, total, created_at')
+    .select('items, total, created_at, metodo_pago')
     .gte('created_at', monthStart.toISOString());
 
   // Gasto del mes = compras de inventario registradas este mes.
@@ -278,6 +373,8 @@ export async function getReports(): Promise<ReportStats> {
   const gastoMes = (monthPurchases || []).reduce((s, p) => s + Number(p.total_cost), 0);
 
   let ventasMes = 0;
+  let ventasMesEfectivo = 0;
+  let ventasMesTransferencia = 0;
   const pedidosMes = (orders || []).length;
   const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
   const wd = new Map<string, number>();
@@ -286,6 +383,8 @@ export async function getReports(): Promise<ReportStats> {
   (orders || []).forEach((o) => {
     const tot = Number(o.total);
     ventasMes += tot;
+    if (o.metodo_pago === 'transferencia') ventasMesTransferencia += tot;
+    else ventasMesEfectivo += tot;
     const dt = new Date(o.created_at);
     const dname = DIAS[dt.getDay()];
     wd.set(dname, (wd.get(dname) || 0) + tot);
@@ -339,6 +438,8 @@ export async function getReports(): Promise<ReportStats> {
 
   return {
     ventasMes,
+    ventasMesEfectivo,
+    ventasMesTransferencia,
     pedidosMes,
     ticketMes: pedidosMes ? ventasMes / pedidosMes : 0,
     gastoMes,

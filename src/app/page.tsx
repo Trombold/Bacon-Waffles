@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { BRAND, STEPS, HERO_IMG, waLink, type MenuItem } from '@/lib/data';
 import { getMenu } from '@/lib/menu';
 import { getPublicReviews } from '@/lib/reviews';
+import { getPublicPromos } from '@/lib/promos';
 import { PALETTE_D as P } from '@/lib/theme';
 
 // Revalida el menú público cada 60s (editable desde el CRM).
@@ -80,6 +81,7 @@ function MenuCategory({
 export default async function Landing() {
   const menu = await getMenu();
   const reviews = await getPublicReviews();
+  const promos = await getPublicPromos();
   const css = `
     .v1d { background: ${P.bg}; color: ${P.ink}; font-family: 'Manrope', system-ui, sans-serif; max-width: 1440px; margin: 0 auto; }
     .v1d .display { font-family: 'Cormorant Garamond', 'Times New Roman', serif; font-weight: 500; letter-spacing: -0.02em; }
@@ -119,6 +121,15 @@ export default async function Landing() {
     .v1d .hero-card img { width: 100%; height: 100%; object-fit: cover; filter: brightness(0.9) saturate(0.95); }
     .v1d .hero-card .grad { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 50%, ${P.bg}cc 100%); }
     .v1d .hero-card .cap { position: absolute; bottom: 32px; left: 32px; right: 32px; color: #fff; }
+
+    .v1d section.promos { padding: 72px 64px; background: ${P.paper}; border-bottom: 1px solid ${P.line}; }
+    .v1d .promos-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 40px; flex-wrap: wrap; }
+    .v1d .promo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+    .v1d .promo-card { position: relative; padding: 32px; border: 1px solid ${P.brand}55; border-radius: 4px; background: ${P.bg}; overflow: hidden; }
+    .v1d .promo-card::before { content: '🎁'; position: absolute; top: -14px; right: -6px; font-size: 72px; opacity: 0.08; }
+    .v1d .promo-badge { display: inline-block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: ${P.bg}; background: ${P.brand}; padding: 5px 10px; border-radius: 999px; margin-bottom: 16px; }
+    .v1d .promo-card h3 { font-family: 'Cormorant Garamond', serif; font-size: 30px; font-weight: 500; margin: 0 0 10px; line-height: 1.1; color: ${P.ink}; }
+    .v1d .promo-card p { font-size: 14px; line-height: 1.55; color: ${P.muted}; margin: 0; }
 
     .v1d section.pad { padding: 96px 64px; }
     .v1d .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.22em; margin-bottom: 16px; }
@@ -168,7 +179,8 @@ export default async function Landing() {
       .v1d .hero-stats { display: none; }
       .v1d .hero-card-wrap { margin-top: 40px; }
       .v1d .hero-card .cap { bottom: 20px; left: 20px; right: 20px; }
-      .v1d section.pad, .v1d section.menu { padding: 56px 22px; }
+      .v1d section.pad, .v1d section.menu, .v1d section.promos { padding: 48px 22px; }
+      .v1d .promo-grid { grid-template-columns: 1fr; gap: 16px; }
       .v1d .steps { grid-template-columns: 1fr; gap: 24px; }
       .v1d .menu-head h2 { font-size: 44px !important; }
       .v1d .menu-cat { grid-template-columns: 1fr; gap: 24px; }
@@ -256,6 +268,32 @@ export default async function Landing() {
 
       <hr className="rule" />
 
+      {/* Promociones — solo se renderiza si hay promos públicas vigentes */}
+      {promos.length > 0 && (
+        <section className="promos" id="promos">
+          <div className="promos-head">
+            <div className="mono brand eyebrow" style={{ marginBottom: 0 }}>— Promos del obrador</div>
+            <h2 className="display" style={{ fontSize: 48, lineHeight: 1, margin: 0 }}>
+              Hoy <span style={{ fontStyle: 'italic' }} className="brand">de regalo.</span>
+            </h2>
+          </div>
+          <div className="promo-grid">
+            {promos.map((pr) => (
+              <div key={pr.id} className="promo-card">
+                <span className="promo-badge">Promo</span>
+                <h3>{pr.name}</h3>
+                {pr.description && <p>{pr.description}</p>}
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 32, textAlign: 'right' }}>
+            <a href={waLink('Hola Bacon Waffles, quiero aprovechar una promo 🎁')} target="_blank" rel="noopener" className="cta">
+              Pedir con promo →
+            </a>
+          </div>
+        </section>
+      )}
+
       {/* Cómo pedir */}
       <section className="pad" id="como">
         <div style={{ textAlign: 'center', marginBottom: 56 }}>
@@ -335,7 +373,7 @@ export default async function Landing() {
               Trabajamos con masa belga de fermentación lenta y cocinamos cada cono al pedido. Sin local físico, sin congelado — el waffle sale del molde directo a la caja del rider.
             </p>
             <p className="muted" style={{ fontSize: 17, lineHeight: 1.7, margin: 0 }}>
-              Atendemos a toda la ciudad de Loja de lunes a viernes. Los fines de semana descansamos para volver a empezar.
+              Atendemos a toda la ciudad de Loja de lunes a domingo, todos los días del año.
             </p>
           </div>
         </div>

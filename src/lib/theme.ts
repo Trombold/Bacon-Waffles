@@ -53,6 +53,15 @@ export const ESTADOS: Record<
 
 export const STATUS_ORDER: OrderStatus[] = ['recibido', 'cocinando', 'en_camino', 'entregado'];
 
+export type PaymentMethod = 'efectivo' | 'transferencia';
+
+export const METODOS_PAGO: Record<PaymentMethod, { label: string; icon: string; color: string }> = {
+  efectivo: { label: 'Efectivo', icon: '💵', color: CRM_THEME.green },
+  transferencia: { label: 'Transferencia', icon: '🏦', color: CRM_THEME.blue },
+};
+
+export const PAYMENT_ORDER: PaymentMethod[] = ['efectivo', 'transferencia'];
+
 export function nextStatus(s: OrderStatus): OrderStatus | null {
   const i = STATUS_ORDER.indexOf(s);
   return i >= 0 && i < STATUS_ORDER.length - 1 ? STATUS_ORDER[i + 1] : null;
