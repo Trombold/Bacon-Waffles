@@ -63,6 +63,24 @@ export type RecipeLine = {
   qty: number;
 };
 
+// Modificadores de una línea de pedido. `exclude` quita ingredientes de la receta
+// (sin cambio de precio); `addons` agrega extras pagos (suma precio + inventario).
+export type LineModifiers = {
+  exclude: string[];                       // ingredient_ids quitados de la receta
+  addons: { id: string; qty: number }[];   // addon_id + cantidad (absoluta por línea)
+};
+
+// Add-on (extra pago) reutilizable. `scope` limita a qué categoría aplica
+// ('all' = cualquier producto). `recipe` es su mini-BOM (qué ingredientes consume).
+export type Addon = {
+  id: string;
+  name: string;
+  price_delta: number;
+  scope: 'Dulces' | 'Salados' | 'Bebidas' | 'all';
+  active: boolean;
+  recipe: { ingredient_id: string; qty: number }[];
+};
+
 export type PromoType = 'free_item' | 'percent' | 'fixed';
 export type PromoScope = 'product' | 'category' | 'order';
 

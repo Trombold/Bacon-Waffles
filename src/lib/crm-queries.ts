@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
-import type { Product, Customer, Order, Review, Ingredient, Purchase, RecipeLine, Promotion } from '@/lib/types';
+import type { Product, Customer, Order, Review, Ingredient, Purchase, RecipeLine, Promotion, Addon } from '@/lib/types';
 import type { OrderStatus, PaymentMethod } from '@/lib/theme';
 
 function hora(iso: string): string {
@@ -96,6 +96,27 @@ export async function getActiveProducts(): Promise<{ id: string; name: string; p
     .order('cat')
     .order('name');
   return (data || []).map((p) => ({ id: p.id as string, name: p.name, price: Number(p.price), cat: String(p.cat) }));
+}
+
+// Add-ons activos con su mini-receta (para preview en pedidos y re-cálculo server-side).
+export async function getActiveAddons(): Promise<Addon[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from('addons')
+    .select('id, name, price_delta, scope, active, addon_recipes(ingredient_id, qty)')
+    .eq('active', true)
+    .order('name');
+  return (data || []).map((a) => {
+    const rec = (a.addon_recipes as unknown as { ingredient_id: string; qty: number }[] | null) || [];
+    return {
+      id: a.id as string,
+      name: a.name as string,
+      price_delta: Number(a.price_delta),
+      scope: a.scope as Addon['scope'],
+      active: Boolean(a.active),
+      recipe: rec.map((r) => ({ ingredient_id: r.ingredient_id, qty: Number(r.qty) })),
+    };
+  });
 }
 
 // ───────── Promociones ─────────

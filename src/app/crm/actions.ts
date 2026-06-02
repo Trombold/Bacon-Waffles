@@ -4,8 +4,9 @@ import { revalidatePath } from 'next/cache';
 import { requireUser } from '@/lib/supabase/server';
 import { nextStatus, type OrderStatus } from '@/lib/theme';
 import { toCanonical, type CanonUnit } from '@/lib/units';
-import { getActiveProducts, getActivePromotions } from '@/lib/crm-queries';
+import { getActiveProducts, getProducts, getActivePromotions, getActiveAddons, getRecipeLines } from '@/lib/crm-queries';
 import { evalPromos, type CartLine } from '@/lib/promo-engine';
+import type { LineModifiers } from '@/lib/types';
 
 // ───────── Productos ─────────
 
@@ -302,8 +303,6 @@ async function consumeForOrder(
     .single();
   if (!ord || ord.inventory_consumed) return;
 
-  const text = String(ord.items || '').toLowerCase();
-  const { data: products } = await supabase.from('products').select('id, name');
   const { data: recipes } = await supabase.from('recipes').select('product_id, ingredient_id, qty');
 
   const recByProd = new Map<string, { ingredient_id: string; qty: number }[]>();
@@ -313,17 +312,56 @@ async function consumeForOrder(
     recByProd.set(r.product_id, arr);
   });
 
-  // Acumula consumo por ingrediente (cantidad de la receta × cantidad pedida).
+  // Acumula consumo por ingrediente.
   const consume = new Map<string, number>();
-  for (const p of products || []) {
-    const ln = String(p.name).toLowerCase();
-    if (!ln || !text.includes(ln)) continue;
-    const rec = recByProd.get(p.id);
-    if (!rec || rec.length === 0) continue;
-    const re = new RegExp('(\\d+)\\s*[x×]?\\s*' + ln.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    const m = text.match(re);
-    const qty = m ? parseInt(m[1], 10) : 1;
-    for (const r of rec) consume.set(r.ingredient_id, (consume.get(r.ingredient_id) || 0) + r.qty * qty);
+
+  // Ruta estructurada: si el pedido tiene order_items, consumo EXACTO por línea
+  // (respeta exclusiones, suma add-ons). Si no hay filas → fallback al parseo de
+  // texto legado (pedidos creados antes de order_items estructurado).
+  const { data: items } = await supabase
+    .from('order_items')
+    .select('product_id, qty, modifiers')
+    .eq('order_id', orderId);
+
+  if (items && items.length > 0) {
+    const { data: addonRecipes } = await supabase.from('addon_recipes').select('addon_id, ingredient_id, qty');
+    const addonRecByAddon = new Map<string, { ingredient_id: string; qty: number }[]>();
+    (addonRecipes || []).forEach((r) => {
+      const arr = addonRecByAddon.get(r.addon_id) || [];
+      arr.push({ ingredient_id: r.ingredient_id, qty: Number(r.qty) });
+      addonRecByAddon.set(r.addon_id, arr);
+    });
+
+    for (const it of items) {
+      const qty = Math.max(1, Math.floor(Number(it.qty) || 1));
+      const mods = (it.modifiers || {}) as LineModifiers;
+      const excl = new Set(Array.isArray(mods.exclude) ? mods.exclude : []);
+      // Receta base menos las exclusiones, × cantidad de la línea.
+      for (const r of (it.product_id ? recByProd.get(it.product_id) : undefined) || []) {
+        if (excl.has(r.ingredient_id)) continue;
+        consume.set(r.ingredient_id, (consume.get(r.ingredient_id) || 0) + r.qty * qty);
+      }
+      // Add-ons: receta del add-on × qty del add-on (absoluto, NO × qty de la línea).
+      for (const a of Array.isArray(mods.addons) ? mods.addons : []) {
+        const aqty = Math.max(1, Math.floor(Number(a.qty) || 1));
+        for (const r of addonRecByAddon.get(a.id) || []) {
+          consume.set(r.ingredient_id, (consume.get(r.ingredient_id) || 0) + r.qty * aqty);
+        }
+      }
+    }
+  } else {
+    const text = String(ord.items || '').toLowerCase();
+    const { data: products } = await supabase.from('products').select('id, name');
+    for (const p of products || []) {
+      const ln = String(p.name).toLowerCase();
+      if (!ln || !text.includes(ln)) continue;
+      const rec = recByProd.get(p.id);
+      if (!rec || rec.length === 0) continue;
+      const re = new RegExp('(\\d+)\\s*[x×]?\\s*' + ln.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const m = text.match(re);
+      const qty = m ? parseInt(m[1], 10) : 1;
+      for (const r of rec) consume.set(r.ingredient_id, (consume.get(r.ingredient_id) || 0) + r.qty * qty);
+    }
   }
 
   if (consume.size > 0) {
@@ -484,35 +522,112 @@ async function nextOrderCode(
   return `#${max + 1}`;
 }
 
-// Re-evalúa las promos del lado servidor (FUENTE DE VERDAD) a partir del carrito
-// estructurado que envía el cliente. Devuelve el texto de items final (con líneas
-// regalo), el total ya descontado y las promos aplicadas (para contabilizar canjes).
-// Nunca confía en el total calculado por el navegador.
+// Línea estructurada para insertar en order_items (incluye regalos de promo a price 0).
+type BuiltLine = {
+  product_id: string | null;
+  name: string;
+  qty: number;
+  unit_price: number;
+  line_total: number;
+  modifiers: LineModifiers;
+};
+
+const EMPTY_MODS: LineModifiers = { exclude: [], addons: [] };
+
+// Normaliza los modificadores que llegan del cliente (no se confía en su forma).
+function sanitizeMods(m: unknown): LineModifiers {
+  const o = (m && typeof m === 'object' ? m : {}) as Record<string, unknown>;
+  const exclude = Array.isArray(o.exclude) ? o.exclude.filter((x): x is string => typeof x === 'string') : [];
+  const addons = Array.isArray(o.addons)
+    ? o.addons
+        .map((a) => {
+          const ao = (a && typeof a === 'object' ? a : {}) as Record<string, unknown>;
+          return { id: String(ao.id ?? ''), qty: Math.max(1, Math.floor(Number(ao.qty) || 1)) };
+        })
+        .filter((a) => a.id !== '')
+    : [];
+  return { exclude, addons };
+}
+
+// Re-evalúa el carrito del lado servidor (FUENTE DE VERDAD): aplica promos sobre el
+// precio BASE, suma el surcharge de add-ons (no entra al descuento), arma el texto de
+// items (con exclusiones, add-ons y regalos) y devuelve las líneas estructuradas para
+// order_items. Nunca confía en el total calculado por el navegador.
 async function buildOrderFromCart(
-  cart: { id: string; qty: number }[]
-): Promise<{ items: string; total: number; appliedPromoIds: string[] } | null> {
+  cart: { id: string; qty: number; modifiers?: unknown }[]
+): Promise<{ items: string; total: number; appliedPromoIds: string[]; lines: BuiltLine[] } | null> {
   if (!Array.isArray(cart) || cart.length === 0) return null;
 
-  const [products, promos] = await Promise.all([getActiveProducts(), getActivePromotions()]);
+  const [products, allProducts, promos, addons, recipeLines] = await Promise.all([
+    getActiveProducts(),
+    getProducts(),
+    getActivePromotions(),
+    getActiveAddons(),
+    getRecipeLines(),
+  ]);
   const byId = new Map(products.map((p) => [p.id, p]));
+  // Regalos de promo pueden ser productos inactivos → resolver contra TODOS los productos.
+  const nameToId = new Map(allProducts.map((p) => [p.name.toLowerCase(), p.id]));
+  const addonById = new Map(addons.map((a) => [a.id, a]));
+  const ingName = new Map(recipeLines.map((r) => [r.ingredient_id, r.ingredient_name]));
 
-  const lines: CartLine[] = [];
+  // Líneas base para el motor de promos (precio base, sin add-ons).
+  const cartLines: CartLine[] = [];
+  // Líneas estructuradas + datos para el texto, en paralelo a cartLines.
+  const built: BuiltLine[] = [];
+  const textParts: string[] = [];
+  let addonsSurcharge = 0;
+
   for (const c of cart) {
     const p = byId.get(c.id);
+    if (!p) continue;
     const qty = Math.max(1, Math.floor(Number(c.qty) || 0));
-    if (p) lines.push({ id: p.id, name: p.name, cat: p.cat, price: p.price, qty });
+    const mods = sanitizeMods(c.modifiers);
+
+    cartLines.push({ id: p.id, name: p.name, cat: p.cat, price: p.price, qty });
+
+    // Surcharge de add-ons: price_delta · qty (absoluto por línea, no × qty del producto).
+    let lineAddon = 0;
+    for (const a of mods.addons) {
+      const ad = addonById.get(a.id);
+      if (ad) lineAddon += ad.price_delta * a.qty;
+    }
+    addonsSurcharge += lineAddon;
+
+    const lineTotal = Math.round((p.price * qty + lineAddon) * 100) / 100;
+    built.push({ product_id: p.id, name: p.name, qty, unit_price: p.price, line_total: lineTotal, modifiers: mods });
+
+    // Texto legible (cocina): "2× Frutella · sin Fresas · + 1× Bola de helado".
+    const suffix: string[] = [];
+    for (const ex of mods.exclude) suffix.push(`sin ${ingName.get(ex) || 'ingrediente'}`);
+    for (const a of mods.addons) {
+      const ad = addonById.get(a.id);
+      if (ad) suffix.push(`+ ${a.qty}× ${ad.name}`);
+    }
+    textParts.push(`${qty}× ${p.name}${suffix.length ? ' · ' + suffix.join(' · ') : ''}`);
   }
-  if (lines.length === 0) return null;
+  if (cartLines.length === 0) return null;
 
-  const subtotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
-  const result = evalPromos(lines, promos);
+  const subtotal = cartLines.reduce((s, l) => s + l.price * l.qty, 0);
+  const result = evalPromos(cartLines, promos);
 
-  const baseText = lines.map((l) => `${l.qty}× ${l.name}`);
-  const rewardText = result.rewardLines.map((r) => `${r.qty}× ${r.name} 🎁`);
-  const items = [...baseText, ...rewardText].join(', ');
-  const total = Math.round((subtotal - result.discount) * 100) / 100;
+  // Regalos de promo → texto + líneas estructuradas (price 0) para consumir inventario.
+  for (const r of result.rewardLines) {
+    textParts.push(`${r.qty}× ${r.name} 🎁`);
+    built.push({
+      product_id: nameToId.get(r.name.toLowerCase()) ?? null,
+      name: r.name,
+      qty: r.qty,
+      unit_price: 0,
+      line_total: 0,
+      modifiers: { ...EMPTY_MODS },
+    });
+  }
 
-  return { items, total, appliedPromoIds: result.applied.map((a) => a.promo_id) };
+  const items = textParts.join(', ');
+  const total = Math.round((subtotal - result.discount + addonsSurcharge) * 100) / 100;
+
+  return { items, total, appliedPromoIds: result.applied.map((a) => a.promo_id), lines: built };
 }
 
 // Suma 1 canje a cada promo aplicada (una vez por pedido). Read-modify-write:
@@ -537,7 +652,7 @@ export async function createOrder(formData: FormData) {
 
   // Si el cliente envía el carrito estructurado, el servidor recalcula items/total
   // aplicando promos (autoritativo). Si no, cae al texto/total legados.
-  let cart: { id: string; qty: number }[] = [];
+  let cart: { id: string; qty: number; modifiers?: unknown }[] = [];
   try {
     cart = JSON.parse(String(formData.get('cart') || '[]'));
   } catch {
@@ -559,6 +674,23 @@ export async function createOrder(formData: FormData) {
     })
     .select('id')
     .single();
+
+  // Persistir líneas estructuradas (con modificadores) para inventario y futuro reporte.
+  // Se insertan SIEMPRE que haya carrito, aunque el pedido nazca 'recibido', para que el
+  // consumo posterior (al pasar a 'cocinando') las lea.
+  if (created && built && built.lines.length > 0) {
+    await supabase.from('order_items').insert(
+      built.lines.map((l) => ({
+        order_id: created.id,
+        product_id: l.product_id,
+        name: l.name,
+        qty: l.qty,
+        price: l.unit_price,
+        line_total: l.line_total,
+        modifiers: l.modifiers,
+      }))
+    );
+  }
 
   if (built) await tallyRedemptions(supabase, built.appliedPromoIds);
   // Si nace ya en "cocinando" (o más avanzado), descuenta inventario de una vez.

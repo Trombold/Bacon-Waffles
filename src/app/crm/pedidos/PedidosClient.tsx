@@ -1,26 +1,35 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useMemo, useState, useTransition } from 'react';
 import { CRM_THEME, CRM_THEME as C, ESTADOS, STATUS_ORDER, METODOS_PAGO, PAYMENT_ORDER, type OrderStatus, type PaymentMethod } from '@/lib/theme';
-import type { Order, Promotion } from '@/lib/types';
+import type { Order, Promotion, Addon, LineModifiers, RecipeLine } from '@/lib/types';
 import { EstadoChip } from '@/components/crm/ui';
 import { evalPromos, type CartLine } from '@/lib/promo-engine';
 import { advanceOrder, archiveOrder, unarchiveOrder, archiveDelivered, createOrder } from '@/app/crm/actions';
 
 type View = 'kanban' | 'lista' | 'historial';
 
-type Line = { id: string; name: string; cat: string; price: number; qty: number };
+// `uid` distingue líneas del mismo producto con modificadores distintos.
+type Line = { uid: string; id: string; name: string; cat: string; price: number; qty: number; modifiers: LineModifiers };
+
+const newUid = () =>
+  typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+const noMods = (m: LineModifiers) => m.exclude.length === 0 && m.addons.length === 0;
 
 export default function PedidosClient({
   orders,
   customers,
   products,
   promotions = [],
+  addons = [],
+  recipes = [],
 }: {
   orders: Order[];
   customers: string[];
   products: { id: string; name: string; price: number; cat: string }[];
   promotions?: Promotion[];
+  addons?: Addon[];
+  recipes?: RecipeLine[];
 }) {
   const [view, setView] = useState<View>('kanban');
   const [open, setOpen] = useState(false);
@@ -28,40 +37,83 @@ export default function PedidosClient({
   const [lines, setLines] = useState<Line[]>([]);
   const [prodSel, setProdSel] = useState('');
   const [qtySel, setQtySel] = useState(1);
+  const [editUid, setEditUid] = useState<string | null>(null);
+
+  const addonById = useMemo(() => new Map(addons.map((a) => [a.id, a])), [addons]);
+  // Receta por producto (para los chips de exclusión).
+  const recByProduct = useMemo(() => {
+    const m = new Map<string, RecipeLine[]>();
+    for (const r of recipes) {
+      const arr = m.get(r.product_id) || [];
+      arr.push(r);
+      m.set(r.product_id, arr);
+    }
+    return m;
+  }, [recipes]);
+  // Surcharge de add-ons de una línea (price_delta · qty, absoluto).
+  const lineSurcharge = (l: Line) =>
+    l.modifiers.addons.reduce((s, a) => s + (addonById.get(a.id)?.price_delta || 0) * a.qty, 0);
 
   const active = orders.filter((o) => !o.archived);
   const archived = orders.filter((o) => o.archived);
   const deliveredActive = active.filter((o) => o.estado === 'entregado');
   const subtotal = lines.reduce((s, l) => s + l.price * l.qty, 0);
+  const addonsSurcharge = lines.reduce((s, l) => s + lineSurcharge(l), 0);
 
-  // Preview de promos (mismo motor que el servidor; el servidor recalcula al crear).
+  // Preview de promos sobre el precio BASE (mismo motor que el servidor).
   const cartLines: CartLine[] = lines.map((l) => ({ id: l.id, name: l.name, cat: l.cat, price: l.price, qty: l.qty }));
   const promo = evalPromos(cartLines, promotions);
-  const total = Math.round((subtotal - promo.discount) * 100) / 100;
+  const total = Math.round((subtotal - promo.discount + addonsSurcharge) * 100) / 100;
 
   function openNew() {
     setLines([]);
     setProdSel('');
     setQtySel(1);
+    setEditUid(null);
     setOpen(true);
   }
   function addLine() {
     const p = products.find((x) => x.id === prodSel);
     if (!p || qtySel < 1) return;
     setLines((prev) => {
-      const i = prev.findIndex((l) => l.id === p.id);
+      // Mergea solo si mismo producto Y sin modificadores (caso común). Si no, línea nueva.
+      const i = prev.findIndex((l) => l.id === p.id && noMods(l.modifiers));
       if (i >= 0) {
         const c = [...prev];
         c[i] = { ...c[i], qty: c[i].qty + qtySel };
         return c;
       }
-      return [...prev, { id: p.id, name: p.name, cat: p.cat, price: p.price, qty: qtySel }];
+      return [...prev, { uid: newUid(), id: p.id, name: p.name, cat: p.cat, price: p.price, qty: qtySel, modifiers: { exclude: [], addons: [] } }];
     });
     setProdSel('');
     setQtySel(1);
   }
-  function removeLine(id: string) {
-    setLines((prev) => prev.filter((l) => l.id !== id));
+  function removeLine(uid: string) {
+    setLines((prev) => prev.filter((l) => l.uid !== uid));
+    setEditUid((cur) => (cur === uid ? null : cur));
+  }
+  function patchMods(uid: string, fn: (m: LineModifiers) => LineModifiers) {
+    setLines((prev) => prev.map((l) => (l.uid === uid ? { ...l, modifiers: fn(l.modifiers) } : l)));
+  }
+  function toggleExclude(uid: string, ingredientId: string) {
+    patchMods(uid, (m) => ({
+      ...m,
+      exclude: m.exclude.includes(ingredientId) ? m.exclude.filter((x) => x !== ingredientId) : [...m.exclude, ingredientId],
+    }));
+  }
+  function toggleAddon(uid: string, addonId: string) {
+    patchMods(uid, (m) => ({
+      ...m,
+      addons: m.addons.some((a) => a.id === addonId)
+        ? m.addons.filter((a) => a.id !== addonId)
+        : [...m.addons, { id: addonId, qty: 1 }],
+    }));
+  }
+  function setAddonQty(uid: string, addonId: string, qty: number) {
+    patchMods(uid, (m) => ({
+      ...m,
+      addons: m.addons.map((a) => (a.id === addonId ? { ...a, qty: Math.max(1, qty) } : a)),
+    }));
   }
 
   const run = (fn: () => Promise<void>) => startTransition(() => void fn());
@@ -74,8 +126,8 @@ export default function PedidosClient({
     fd.set('cliente', (f.elements.namedItem('cliente') as HTMLSelectElement).value);
     fd.set('estado', (f.elements.namedItem('estado') as HTMLSelectElement).value);
     fd.set('metodo_pago', (f.elements.namedItem('metodo_pago') as HTMLSelectElement).value);
-    // Carrito estructurado → el servidor recalcula items/total y aplica promos.
-    fd.set('cart', JSON.stringify(lines.map((l) => ({ id: l.id, qty: l.qty }))));
+    // Carrito estructurado → el servidor recalcula items/total, promos y add-ons.
+    fd.set('cart', JSON.stringify(lines.map((l) => ({ id: l.id, qty: l.qty, modifiers: l.modifiers }))));
     // Legados (fallback si el servidor no recibe carrito): sin promo.
     fd.set('items', lines.map((l) => `${l.qty}× ${l.name}`).join(', '));
     fd.set('total', String(subtotal));
@@ -256,26 +308,121 @@ export default function PedidosClient({
 
               {lines.length > 0 && (
                 <div style={{ border: `1px solid ${C.line}`, borderRadius: 8, overflow: 'hidden' }}>
-                  {lines.map((l) => (
-                    <div
-                      key={l.id}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: `1px solid ${C.line}`, fontSize: 13 }}
-                    >
-                      <span style={{ flex: 1 }}>
-                        <strong>{l.qty}×</strong> {l.name}
-                        <span style={{ color: C.muted }}> · ${l.price.toFixed(2)}</span>
-                      </span>
-                      <span style={{ color: C.ink }}>${(l.price * l.qty).toFixed(2)}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeLine(l.id)}
-                        title="Quitar"
-                        style={{ background: 'transparent', border: 0, color: C.red, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
+                  {lines.map((l) => {
+                    const recIngs = recByProduct.get(l.id) || [];
+                    const eligible = addons.filter((a) => a.scope === 'all' || a.scope === l.cat);
+                    const canModify = recIngs.length > 0 || eligible.length > 0;
+                    const lineAmt = l.price * l.qty + lineSurcharge(l);
+                    const isOpen = editUid === l.uid;
+                    return (
+                      <div key={l.uid} style={{ borderBottom: `1px solid ${C.line}`, fontSize: 13 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
+                          <span style={{ flex: 1 }}>
+                            <strong>{l.qty}×</strong> {l.name}
+                            <span style={{ color: C.muted }}> · ${l.price.toFixed(2)}</span>
+                          </span>
+                          {canModify && (
+                            <button
+                              type="button"
+                              onClick={() => setEditUid(isOpen ? null : l.uid)}
+                              style={{ background: 'transparent', border: 0, color: isOpen ? C.amber : C.muted, cursor: 'pointer', fontSize: 11, fontWeight: 600, fontFamily: 'inherit' }}
+                            >
+                              {isOpen ? 'Listo' : 'Modificar'}
+                            </button>
+                          )}
+                          <span style={{ color: C.ink }}>${lineAmt.toFixed(2)}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeLine(l.uid)}
+                            title="Quitar"
+                            style={{ background: 'transparent', border: 0, color: C.red, cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
+                          >
+                            ×
+                          </button>
+                        </div>
+
+                        {/* Resumen de modificadores aplicados */}
+                        {!noMods(l.modifiers) && (
+                          <div style={{ padding: '0 12px 8px 12px', fontSize: 11, color: C.muted, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {l.modifiers.exclude.map((ex) => (
+                              <span key={ex} style={{ color: C.red }}>sin {recIngs.find((r) => r.ingredient_id === ex)?.ingredient_name || 'ingrediente'}</span>
+                            ))}
+                            {l.modifiers.addons.map((a) => (
+                              <span key={a.id} style={{ color: C.green }}>+ {a.qty}× {addonById.get(a.id)?.name || 'extra'}</span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Panel de edición */}
+                        {isOpen && (
+                          <div style={{ padding: '4px 12px 12px 12px', background: `${C.bg}`, borderTop: `1px dashed ${C.line}` }}>
+                            {recIngs.length > 0 && (
+                              <div style={{ marginBottom: eligible.length ? 12 : 0 }}>
+                                <div style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Quitar ingredientes</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                  {recIngs.map((r) => {
+                                    const off = l.modifiers.exclude.includes(r.ingredient_id);
+                                    return (
+                                      <button
+                                        key={r.ingredient_id}
+                                        type="button"
+                                        onClick={() => toggleExclude(l.uid, r.ingredient_id)}
+                                        style={{
+                                          padding: '4px 10px', borderRadius: 999, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit',
+                                          border: `1px solid ${off ? C.red : C.line}`,
+                                          background: off ? `${C.red}22` : 'transparent',
+                                          color: off ? C.red : C.ink,
+                                          textDecoration: off ? 'line-through' : 'none',
+                                        }}
+                                        title={off ? 'Volver a incluir' : 'Quitar del pedido'}
+                                      >
+                                        {r.ingredient_name}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            {eligible.length > 0 && (
+                              <div>
+                                <div style={{ fontSize: 10, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Extras</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  {eligible.map((a) => {
+                                    const sel = l.modifiers.addons.find((x) => x.id === a.id);
+                                    return (
+                                      <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleAddon(l.uid, a.id)}
+                                          style={{
+                                            flex: 1, textAlign: 'left', padding: '6px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit',
+                                            border: `1px solid ${sel ? C.green : C.line}`,
+                                            background: sel ? `${C.green}22` : 'transparent',
+                                            color: sel ? C.green : C.ink,
+                                          }}
+                                        >
+                                          {sel ? '✓ ' : '+ '}{a.name} · ${a.price_delta.toFixed(2)}
+                                        </button>
+                                        {sel && (
+                                          <input
+                                            type="number"
+                                            min={1}
+                                            value={sel.qty}
+                                            onChange={(e) => setAddonQty(l.uid, a.id, Number(e.target.value))}
+                                            style={{ ...inp(C), width: 56, height: 34 }}
+                                          />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   {promo.applied.length > 0 && (
                     <div style={{ borderTop: `1px solid ${C.line}`, background: `${C.green}11` }}>
                       {promo.applied.map((a) => (
@@ -296,10 +443,16 @@ export default function PedidosClient({
                     </div>
                   )}
                   <div style={{ borderTop: `1px solid ${C.line}` }}>
-                    {promo.discount > 0 && (
+                    {(promo.discount > 0 || addonsSurcharge > 0) && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 12px 0', fontSize: 12, color: C.muted }}>
                         <span>Subtotal</span>
                         <span>${subtotal.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {addonsSurcharge > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 12px 0', fontSize: 12, color: C.muted }}>
+                        <span>Extras</span>
+                        <span>+ ${addonsSurcharge.toFixed(2)}</span>
                       </div>
                     )}
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 12px', fontWeight: 700 }}>
